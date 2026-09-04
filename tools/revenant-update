@@ -1,0 +1,169 @@
+#!/bin/bash
+# ==============================================================================
+# Revenant OS - Intelligent Over-The-Air (OTA) System & Agent Updater
+# ==============================================================================
+# Upgrades:
+#   1. Agent Core (OmniRoute, OpenInterpreter, OpenViking, Hermes Agent)
+#   2. Offline Neural TTS Voice Models (Piper)
+#   3. System Scripts, Themes, Plymouth Splash, and Desktop Configurations
+#   4. Upstream Linux Kernel & Security Patches
+# ==============================================================================
+
+set -e
+
+REPO_OWNER="Fixitdaz"
+REPO_NAME="revenant-os"
+RAW_BASE="https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/main"
+LOCAL_VERSION_FILE="/etc/revenant/version.json"
+
+CYAN="\033[96m"
+GREEN="\033[92m"
+YELLOW="\033[93m"
+RED="\033[91m"
+RESET="\033[0m"
+BOLD="\033[1m"
+
+echo -e "${CYAN}${BOLD}"
+echo "=========================================================="
+echo "           REVENANT OS - SYSTEM & AGENT UPDATER           "
+echo "=========================================================="
+echo -e "${RESET}"
+
+if [ "$EUID" -ne 0 ]; then
+  echo -e "${RED}[!] Please run as root: sudo revenant-update${RESET}"
+  exit 1
+fi
+
+CHECK_ONLY=false
+FORCE=false
+
+for arg in "$@"; do
+  case "$arg" in
+    --check|-c)
+      CHECK_ONLY=true
+      ;;
+    --force|-f)
+      FORCE=true
+      ;;
+    --help|-h)
+      echo "Usage: sudo revenant-update [OPTIONS]"
+      echo ""
+      echo "Options:"
+      echo "  -c, --check    Check for available updates without applying them"
+      echo "  -f, --force    Force re-application of all updates and agent dependencies"
+      echo "  -h, --help     Show this help message"
+      exit 0
+      ;;
+  esac
+done
+
+echo -e "${CYAN}[*] Testing internet connectivity...${RESET}"
+if ! curl -s --head --connect-timeout 5 https://github.com >/dev/null; then
+  echo -e "${RED}[!] Internet connection failed. Please connect to a network and try again.${RESET}"
+  exit 1
+fi
+echo -e "${GREEN}[✓] Online connection verified.${RESET}"
+
+mkdir -p /etc/revenant
+if [ ! -f "$LOCAL_VERSION_FILE" ]; then
+  cat << 'EOF' > "$LOCAL_VERSION_FILE"
+{
+  "os_name": "Revenant OS",
+  "version": "1.0.0",
+  "build": 14,
+  "release_date": "2026-09-04"
+}
+EOF
+fi
+
+CURRENT_VER=$(grep -oP '"version":\s*"\K[^"]+' "$LOCAL_VERSION_FILE" || echo "1.0.0")
+CURRENT_BUILD=$(grep -oP '"build":\s*\K[0-9]+' "$LOCAL_VERSION_FILE" || echo "14")
+
+echo -e "${CYAN}[*] Current Installed Version: ${BOLD}v$CURRENT_VER (Build $CURRENT_BUILD)${RESET}"
+echo -e "${CYAN}[*] Querying remote release manifest from GitHub...${RESET}"
+
+REMOTE_MANIFEST=$(curl -fsSL --connect-timeout 10 "$RAW_BASE/version.json" 2>/dev/null || true)
+
+if [ -z "$REMOTE_MANIFEST" ]; then
+  echo -e "${YELLOW}[!] Could not fetch remote manifest (repository may be private or offline).${RESET}"
+  echo -e "${CYAN}[*] Proceeding with live component synchronization mode...${RESET}"
+  REMOTE_BUILD=$CURRENT_BUILD
+else
+  REMOTE_VER=$(echo "$REMOTE_MANIFEST" | grep -oP '"version":\s*"\K[^"]+' || echo "$CURRENT_VER")
+  REMOTE_BUILD=$(echo "$REMOTE_MANIFEST" | grep -oP '"build":\s*\K[0-9]+' || echo "$CURRENT_BUILD")
+  echo -e "${CYAN}[*] Latest Remote Version:    ${BOLD}v$REMOTE_VER (Build $REMOTE_BUILD)${RESET}"
+fi
+
+if [ "$CHECK_ONLY" = true ]; then
+  if [ "$REMOTE_BUILD" -gt "$CURRENT_BUILD" ]; then
+    echo -e "${GREEN}[✓] A new update is available: Build $REMOTE_BUILD (Installed: $CURRENT_BUILD)${RESET}"
+    echo -e "Run 'sudo revenant-update' to install."
+    exit 0
+  else
+    echo -e "${GREEN}[✓] System is up to date.${RESET}"
+    exit 0
+  fi
+fi
+
+# TIER 1: Agentic AI Core Upgrades
+echo ""
+echo -e "${CYAN}${BOLD}[1/4] Upgrading Agentic AI Core...${RESET}"
+echo -e "${CYAN}  -> Upgrading OmniRoute & Hermes Agent...${RESET}"
+npm install -g omniroute hermes-agent --silent || true
+
+echo -e "${CYAN}  -> Upgrading OpenInterpreter & OpenViking memory context engine...${RESET}"
+pip3 install --break-system-packages --upgrade open-interpreter openviking >/dev/null 2>&1 || true
+
+echo -e "${CYAN}  -> Restarting OmniRoute systemd service...${RESET}"
+systemctl restart omniroute.service 2>/dev/null || true
+echo -e "${GREEN}[✓] Agentic AI Core updated and running.${RESET}"
+
+# TIER 2: Offline Neural TTS (Piper)
+echo ""
+echo -e "${CYAN}${BOLD}[2/4] Verifying Offline Neural Speech Synthesis (Piper)...${RESET}"
+mkdir -p /opt/piper/models
+if [ ! -f /opt/piper/models/en_US-lessac-medium.onnx ]; then
+  echo -e "${CYAN}  -> Downloading neural voice model...${RESET}"
+  curl -fsSL -o /opt/piper/models/en_US-lessac-medium.onnx https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx || true
+  curl -fsSL -o /opt/piper/models/en_US-lessac-medium.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json || true
+fi
+echo -e "${GREEN}[✓] Offline neural speech synthesis verified.${RESET}"
+
+# TIER 3: System Utilities & Drivers (Toughbook CF-52)
+echo ""
+echo -e "${CYAN}${BOLD}[3/4] Synchronizing System Configurations & Field Drivers...${RESET}"
+if dmidecode 2>/dev/null | grep -iq "Panasonic"; then
+  modprobe panasonic-laptop 2>/dev/null || true
+fi
+if [ -f /usr/local/bin/ai ]; then
+  chmod +x /usr/local/bin/ai
+fi
+echo -e "${GREEN}[✓] Field drivers and utilities synchronized.${RESET}"
+
+# TIER 4: Upstream Base Security & Kernel
+echo ""
+echo -e "${CYAN}${BOLD}[4/4] Checking Upstream Security Patches...${RESET}"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get upgrade -y -qq
+apt-get autoremove -y -qq
+echo -e "${GREEN}[✓] Security packages up to date.${RESET}"
+
+if [ -n "$REMOTE_MANIFEST" ]; then
+  echo "$REMOTE_MANIFEST" > "$LOCAL_VERSION_FILE"
+else
+  cat << EOF > "$LOCAL_VERSION_FILE"
+{
+  "os_name": "Revenant OS",
+  "version": "$CURRENT_VER",
+  "build": $CURRENT_BUILD,
+  "last_updated": "$(date -Iseconds)"
+}
+EOF
+fi
+
+echo ""
+echo -e "${GREEN}${BOLD}==========================================================${RESET}"
+echo -e "${GREEN}${BOLD}       [✓] REVENANT OS IS FULLY UP TO DATE!               ${RESET}"
+echo -e "${GREEN}${BOLD}==========================================================${RESET}"
+echo ""

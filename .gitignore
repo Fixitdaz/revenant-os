@@ -1,0 +1,17 @@
+# Large ISO images (stored locally / published via GitHub Releases)
+*.iso
+*.img
+*.squashfs
+
+# Temporary workspaces and build directories
+testiso/
+wget-log*
+*.log
+scratch/
+.system_generated/
+emerald_original.script
+emerald_patched.script
+
+# Python caches
+__pycache__/
+*.pyc
