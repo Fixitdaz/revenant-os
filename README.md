@@ -6,6 +6,11 @@
 [![Target](https://img.shields.io/badge/Hardware-Panasonic_Toughbook_CF--52-ff007f?style=for-the-badge&logo=panasonic)](https://github.com/Fixitdaz/revenant-os)
 [![Base](https://img.shields.io/badge/Kernel-Linux_6.1_Debian_Bookworm-purple?style=for-the-badge&logo=debian)](https://github.com/Fixitdaz/revenant-os)
 [![Local Engine](https://img.shields.io/badge/Local_LLM-Qwen2.5--Coder--1.5B_via_llama--server-brightgreen?style=for-the-badge)](https://github.com/Fixitdaz/revenant-os)
+[![Development Status](https://img.shields.io/badge/Status-Active_Development_/_WIP-orange?style=for-the-badge)](https://github.com/Fixitdaz/revenant-os)
+
+> [!IMPORTANT]
+> **Active Development & Work-in-Progress Disclaimer**  
+> Revenant OS is currently under active, rapid development (Release Candidate phase). While core features—including fully offline local LLM inference, autonomous agents, hardware drivers, and desktop environments—are functional, you may encounter occasional bugs, edge-case quirks, or ongoing adjustments as we actively iron them out across hardware revisions. Issues and feedback are welcome as we iterate toward a stable final release!
 
 ---
 
