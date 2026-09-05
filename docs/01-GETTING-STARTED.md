@@ -14,13 +14,13 @@
 ### Option A: Using Rufus (Windows)
 1. Download [Rufus](https://rufus.ie/).
 2. Insert your USB flash drive.
-3. Select `revenant_os_toughbook_v15.iso`.
+3. Select `revenant_os_toughbook_v15_5.iso`.
 4. Partition scheme: **MBR**, Target system: **BIOS or UEFI**.
 5. Click **Start**. When prompted, select **Write in DD Image mode** (recommended for hybrid bootloaders).
 
 ### Option B: Using BalenaEtcher (Windows / macOS / Linux)
 1. Open BalenaEtcher.
-2. Select `revenant_os_toughbook_v15.iso`.
+2. Select `revenant_os_toughbook_v15_5.iso`.
 3. Select your target USB stick.
 4. Click **Flash!**.
 
@@ -34,7 +34,7 @@
 5. Press `F10` to save changes and exit.
 6. The high-definition **Revenant OS GRUB bootloader** will appear. Select `Revenant OS - Agentic Core`.
 7. The full-screen Revenant cyber boot splash will display as drivers load.
-8. The system automatically logs into the live environment.
+8. The system automatically enters the live environment.
 
 ---
 
@@ -43,5 +43,15 @@
 2. Enter your desired **Username**, **Password**, and **Computer Hostname**.
 3. Choose the target internal drive (e.g. `/dev/sda`).
 4. Review the final confirmation prompt and click **"Yes, Erase & Install"**.
-5. The installer will partition, format (ext4), replicate system files, configure the bootloader, and un-divert initramfs updates.
+5. The installer will partition, format (ext4), replicate system files, configure the bootloader, and prepare user credentials.
 6. When the success notification appears, reboot and remove the USB drive.
+
+---
+
+## First Boot & Session Selection
+1. On boot, the system presents the **LightDM Login Screen**.
+2. Select your newly created user account and type your password.
+3. In the top bar of the login screen, click the session dropdown to select:
+   - **Xfce Session**: Traditional full graphical desktop.
+   - **i3**: Ultra-lightweight tiling window manager.
+4. You can also switch between environments at any time while logged in by clicking the **"Switch to i3"** or **"Switch to XFCE"** desktop shortcuts.

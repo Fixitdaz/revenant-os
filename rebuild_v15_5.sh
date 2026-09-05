@@ -111,7 +111,7 @@ After=network.target
 [Service]
 Type=simple
 Environment=LD_LIBRARY_PATH=/opt/llama.cpp
-ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --host 127.0.0.1 --port 8080 --ctx-size 32768 --cache-type-k q4_0 --cache-type-v q4_0 -np 1 --threads 2 --n-gpu-layers 0
+ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --host 127.0.0.1 --port 8080 --ctx-size 20480 -np 1 --threads 2 --n-gpu-layers 0
 Restart=always
 RestartSec=3
 User=root
@@ -164,16 +164,17 @@ model:
   default: "qwen2.5-coder-1.5b-instruct"
   provider: "custom"
   base_url: "http://127.0.0.1:8080/v1"
-  context_length: 32768
+  context_length: 20480
 custom_providers:
-  - base_url: "http://127.0.0.1:8080/v1"
+  - name: "local"
+    base_url: "http://127.0.0.1:8080/v1"
     models:
       qwen2.5-coder-1.5b-instruct:
-        context_length: 32768
+        context_length: 20480
 auxiliary:
   compression:
     model: "qwen2.5-coder-1.5b-instruct"
-    context_length: 32768
+    context_length: 20480
 toolsets:
   - "hermes-cli"
 HERMES_CFG
@@ -328,6 +329,61 @@ Categories=System;Utility;Development;
 DESKEOF
   chmod +x "$ddir/Start_AI_Engine.desktop"
 done
+
+# Create switch-to-i3 and switch-to-xfce utilities
+cat << 'I3_SW_EOF' > "$PATCH_ROOT/usr/local/bin/switch-to-i3"
+#!/bin/bash
+if pgrep -x xfwm4 >/dev/null 2>&1; then
+  pkill -9 xfdesktop 2>/dev/null || true
+  pkill -9 xfce4-panel 2>/dev/null || true
+  pkill -9 xfwm4 2>/dev/null || true
+  exec i3 &
+else
+  exec i3 &
+fi
+I3_SW_EOF
+chmod +x "$PATCH_ROOT/usr/local/bin/switch-to-i3"
+
+cat << 'XFCE_SW_EOF' > "$PATCH_ROOT/usr/local/bin/switch-to-xfce"
+#!/bin/bash
+pkill -9 i3 2>/dev/null || true
+exec xfce4-session &
+XFCE_SW_EOF
+chmod +x "$PATCH_ROOT/usr/local/bin/switch-to-xfce"
+
+mkdir -p "$PATCH_ROOT/usr/share/applications"
+cat << 'DESK_I3_EOF' > "$PATCH_ROOT/usr/share/applications/switch-to-i3.desktop"
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Switch to i3 Window Manager
+Comment=Switch current desktop session to i3 tiling window manager
+Exec=/usr/local/bin/switch-to-i3
+Icon=window-manager
+Terminal=false
+StartupNotify=true
+Categories=System;Utility;
+DESK_I3_EOF
+
+cat << 'DESK_XFCE_EOF' > "$PATCH_ROOT/usr/share/applications/switch-to-xfce.desktop"
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Switch to XFCE Desktop
+Comment=Switch current desktop session to XFCE graphical desktop
+Exec=/usr/local/bin/switch-to-xfce
+Icon=xfce4-logo
+Terminal=false
+StartupNotify=true
+Categories=System;Utility;
+DESK_XFCE_EOF
+
+for ddir in "$PATCH_ROOT/etc/skel/Desktop" "$PATCH_ROOT/home/user/Desktop" "$PATCH_ROOT/home/revenant/Desktop"; do
+  cp "$PATCH_ROOT/usr/share/applications/switch-to-i3.desktop" "$ddir/Switch_to_i3.desktop"
+  cp "$PATCH_ROOT/usr/share/applications/switch-to-xfce.desktop" "$ddir/Switch_to_XFCE.desktop"
+  chmod +x "$ddir/Switch_to_i3.desktop" "$ddir/Switch_to_XFCE.desktop"
+done
+
 chown -R 1001:1001 "$PATCH_ROOT/home/user/Desktop" 2>/dev/null || true
 chown -R 1000:1000 "$PATCH_ROOT/home/revenant/Desktop" 2>/dev/null || true
 
@@ -513,6 +569,11 @@ if [ -f "/mnt/target/etc/skel/Desktop/Start_AI_Engine.desktop" ]; then
   cp -a "/mnt/target/etc/skel/Desktop/Start_AI_Engine.desktop" "/mnt/target/home/$NEW_USER/Desktop/"
   chmod +x "/mnt/target/home/$NEW_USER/Desktop/Start_AI_Engine.desktop"
 fi
+if [ -f "/mnt/target/etc/skel/Desktop/Switch_to_i3.desktop" ]; then
+  cp -a "/mnt/target/etc/skel/Desktop/Switch_to_i3.desktop" "/mnt/target/home/$NEW_USER/Desktop/"
+  cp -a "/mnt/target/etc/skel/Desktop/Switch_to_XFCE.desktop" "/mnt/target/home/$NEW_USER/Desktop/"
+  chmod +x "/mnt/target/home/$NEW_USER/Desktop/Switch_to_i3.desktop" "/mnt/target/home/$NEW_USER/Desktop/Switch_to_XFCE.desktop"
+fi
 chroot /mnt/target chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/Desktop" 2>/dev/null || true
 
 echo "$NEW_HOST" > /mnt/target/etc/hostname
@@ -526,13 +587,18 @@ ff02::1     ip6-allnodes
 ff02::2     ip6-allrouters
 HOSTSEOF
 
-mkdir -p /mnt/target/etc/lightdm/lightdm.conf.d
-cat << LIGHTDMCONF > /mnt/target/etc/lightdm/lightdm.conf.d/50-autologin.conf
-[Seat:*]
-autologin-user=$NEW_USER
-autologin-user-timeout=0
-user-session=xfce
-LIGHTDMCONF
+# Disable autologin so LightDM displays login greeter on boot
+# This gives the user access to their user account and the XFCE/i3 session selector
+rm -f /mnt/target/etc/lightdm/lightdm.conf.d/*autologin*.conf
+rm -f /mnt/target/etc/lightdm/lightdm.conf.d/*live*.conf
+sed -i 's/^autologin-user=.*/#autologin-user=/' /mnt/target/etc/lightdm/lightdm.conf 2>/dev/null || true
+sed -i 's/^autologin-user-timeout=.*/#autologin-user-timeout=/' /mnt/target/etc/lightdm/lightdm.conf 2>/dev/null || true
+for cf in /mnt/target/etc/lightdm/lightdm.conf.d/*.conf; do
+  if [ -f "$cf" ]; then
+    sed -i 's/^autologin-user=.*/#autologin-user=/' "$cf" 2>/dev/null || true
+    sed -i 's/^autologin-user-timeout=.*/#autologin-user-timeout=/' "$cf" 2>/dev/null || true
+  fi
+done
 
 rm -f /mnt/target/etc/skel/Desktop/Install*.desktop
 rm -f "/mnt/target/home/$NEW_USER/Desktop/Install"*.desktop 2>/dev/null || true

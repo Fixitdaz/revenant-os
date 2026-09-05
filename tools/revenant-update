@@ -64,6 +64,22 @@ if ! curl -s --head --connect-timeout 5 https://github.com >/dev/null; then
 fi
 echo -e "${GREEN}[✓] Online connection verified.${RESET}"
 
+# Self-update check: ensure the OTA updater script is always running the latest version from GitHub
+if [ "$REVENANT_UPDATED" != "1" ]; then
+  echo -e "${CYAN}[*] Checking for latest OTA updater script from GitHub...${RESET}"
+  if curl -fsSL --connect-timeout 5 "$RAW_BASE/tools/revenant-update" -o /tmp/revenant-update.new 2>/dev/null; then
+    if [ -s /tmp/revenant-update.new ] && ! cmp -s /tmp/revenant-update.new "$0" 2>/dev/null; then
+      cp /tmp/revenant-update.new /usr/local/bin/revenant-update
+      chmod +x /usr/local/bin/revenant-update
+      rm -f /tmp/revenant-update.new
+      echo -e "${GREEN}[✓] OTA updater updated itself to latest release. Re-executing...${RESET}"
+      export REVENANT_UPDATED=1
+      exec /usr/local/bin/revenant-update "$@"
+    fi
+  fi
+  rm -f /tmp/revenant-update.new
+fi
+
 mkdir -p /etc/revenant
 if [ ! -f "$LOCAL_VERSION_FILE" ]; then
   cat << 'EOF' > "$LOCAL_VERSION_FILE"
@@ -136,7 +152,7 @@ After=network.target
 [Service]
 Type=simple
 Environment=LD_LIBRARY_PATH=/opt/llama.cpp
-ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --host 127.0.0.1 --port 8080 --ctx-size 32768 --cache-type-k q4_0 --cache-type-v q4_0 -np 1 --threads 2 --n-gpu-layers 0
+ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --host 127.0.0.1 --port 8080 --ctx-size 20480 -np 1 --threads 2 --n-gpu-layers 0
 Restart=always
 RestartSec=3
 User=root
@@ -148,7 +164,7 @@ SVCEOF
 systemctl daemon-reload
 systemctl enable llama-server.service 2>/dev/null || true
 systemctl restart llama-server.service 2>/dev/null || true
-echo -e "${GREEN}[✓] Local inference server configured on http://127.0.0.1:8080/v1 (32K context, q4 KV cache)${RESET}"
+echo -e "${GREEN}[✓] Local inference server configured on http://127.0.0.1:8080/v1 (20K context, standard f16 KV cache)${RESET}"
 
 # TIER 2: OpenViking Memory Daemon & Agent Core
 echo ""
@@ -193,7 +209,7 @@ if [ -f /usr/lib/node_modules/hermes-agent/runtime/hermes-agent/agent/model_meta
   sed -i 's/MINIMUM_CONTEXT_LENGTH = 64_000/MINIMUM_CONTEXT_LENGTH = 8_000/g' /usr/lib/node_modules/hermes-agent/runtime/hermes-agent/agent/model_metadata.py
 fi
 
-# Update Hermes config templates with 32k context_length and auxiliary compression overrides
+# Update Hermes config templates with 20k context_length and auxiliary compression overrides
 for u_home in /root /etc/skel /home/*; do
   if [ -d "$u_home" ]; then
     mkdir -p "$u_home/.hermes"
@@ -202,16 +218,17 @@ model:
   default: "qwen2.5-coder-1.5b-instruct"
   provider: "custom"
   base_url: "http://127.0.0.1:8080/v1"
-  context_length: 32768
+  context_length: 20480
 custom_providers:
-  - base_url: "http://127.0.0.1:8080/v1"
+  - name: "local"
+    base_url: "http://127.0.0.1:8080/v1"
     models:
       qwen2.5-coder-1.5b-instruct:
-        context_length: 32768
+        context_length: 20480
 auxiliary:
   compression:
     model: "qwen2.5-coder-1.5b-instruct"
-    context_length: 32768
+    context_length: 20480
 toolsets:
   - "hermes-cli"
 HERMES_UPDATE_CFG
@@ -219,10 +236,12 @@ HERMES_UPDATE_CFG
 OPENAI_BASE_URL=http://127.0.0.1:8080/v1
 OPENAI_API_KEY=sk-local-revenant
 HERMES_UPDATE_ENV
+    u_owner=$(stat -c '%u:%g' "$u_home" 2>/dev/null || echo "1000:1000")
+    chown -R "$u_owner" "$u_home/.hermes" 2>/dev/null || true
   fi
 done
 
-echo -e "${GREEN}[✓] OpenViking memory daemon and Hermes 32K configuration synchronized.${RESET}"
+echo -e "${GREEN}[✓] OpenViking memory daemon and Hermes 20K configuration synchronized.${RESET}"
 
 # TIER 3: Universal 'ai' Command (Offline Local Integration)
 echo ""
@@ -344,6 +363,93 @@ done
 
 echo -e "${GREEN}[✓] Universal 'ai' terminal tool and Desktop AI Launcher updated.${RESET}"
 
+# TIER 3.5: Dual Desktop Environments (XFCE & i3) & Login Greeter
+echo ""
+echo -e "${CYAN}${BOLD}[*] Configuring Dual Desktops (XFCE & i3) & Login Greeter...${RESET}"
+
+# Ensure i3, status bar, and app menu are installed
+if ! command -v i3 >/dev/null 2>&1; then
+  echo -e "${CYAN}  -> Installing i3 window manager & menu utilities...${RESET}"
+  apt-get update -qq
+  apt-get install -y --no-install-recommends i3 i3status dmenu feh
+fi
+
+# 1. Provide dedicated fast session switchers
+cat << 'I3_SW_EOF' > /usr/local/bin/switch-to-i3
+#!/bin/bash
+# Switch current active session to i3 Tiling Window Manager
+if pgrep -x xfwm4 >/dev/null 2>&1; then
+  pkill -9 xfdesktop 2>/dev/null || true
+  pkill -9 xfce4-panel 2>/dev/null || true
+  pkill -9 xfwm4 2>/dev/null || true
+  exec i3 &
+else
+  exec i3 &
+fi
+I3_SW_EOF
+chmod +x /usr/local/bin/switch-to-i3
+
+cat << 'XFCE_SW_EOF' > /usr/local/bin/switch-to-xfce
+#!/bin/bash
+# Switch current active session to XFCE Graphical Desktop
+pkill -9 i3 2>/dev/null || true
+exec xfce4-session &
+XFCE_SW_EOF
+chmod +x /usr/local/bin/switch-to-xfce
+
+# 2. Desktop entries for application menus and desktop shortcuts
+cat << 'DESK_I3_EOF' > /usr/share/applications/switch-to-i3.desktop
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Switch to i3 Window Manager
+Comment=Switch current desktop session to i3 tiling window manager
+Exec=/usr/local/bin/switch-to-i3
+Icon=window-manager
+Terminal=false
+StartupNotify=true
+Categories=System;Utility;
+DESK_I3_EOF
+
+cat << 'DESK_XFCE_EOF' > /usr/share/applications/switch-to-xfce.desktop
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Switch to XFCE Desktop
+Comment=Switch current desktop session to XFCE graphical desktop
+Exec=/usr/local/bin/switch-to-xfce
+Icon=xfce4-logo
+Terminal=false
+StartupNotify=true
+Categories=System;Utility;
+DESK_XFCE_EOF
+
+# 3. Deploy Switch_to_i3.desktop to all user desktops
+for ddir in /etc/skel/Desktop /root/Desktop /home/*/Desktop; do
+  if [ -d "$ddir" ]; then
+    cp /usr/share/applications/switch-to-i3.desktop "$ddir/Switch_to_i3.desktop"
+    cp /usr/share/applications/switch-to-xfce.desktop "$ddir/Switch_to_XFCE.desktop"
+    chmod +x "$ddir/Switch_to_i3.desktop" "$ddir/Switch_to_XFCE.desktop"
+    u_owner=$(stat -c '%u:%g' "$ddir" 2>/dev/null || echo "1000:1000")
+    chown "$u_owner" "$ddir/Switch_to_i3.desktop" "$ddir/Switch_to_XFCE.desktop" 2>/dev/null || true
+  fi
+done
+
+# 4. Disable live autologin so LightDM greeter displays on boot
+# This allows selecting user accounts and choosing between XFCE and i3 at login
+echo -e "${CYAN}  -> Configuring LightDM login screen (enabling user/session picker)...${RESET}"
+rm -f /etc/lightdm/lightdm.conf.d/*autologin*.conf
+sed -i 's/^autologin-user=.*/#autologin-user=/' /etc/lightdm/lightdm.conf 2>/dev/null || true
+sed -i 's/^autologin-user-timeout=.*/#autologin-user-timeout=/' /etc/lightdm/lightdm.conf 2>/dev/null || true
+for cf in /etc/lightdm/lightdm.conf.d/*.conf; do
+  if [ -f "$cf" ]; then
+    sed -i 's/^autologin-user=.*/#autologin-user=/' "$cf" 2>/dev/null || true
+    sed -i 's/^autologin-user-timeout=.*/#autologin-user-timeout=/' "$cf" 2>/dev/null || true
+  fi
+done
+
+echo -e "${GREEN}[✓] Dual desktop environments (XFCE / i3) & LightDM login greeter configured.${RESET}"
+
 # TIER 4: Offline Neural TTS (Piper)
 echo ""
 echo -e "${CYAN}${BOLD}[4/5] Verifying Offline Neural Speech Synthesis (Piper)...${RESET}"
@@ -418,7 +524,7 @@ cat << EOF > "$LOCAL_VERSION_FILE"
     "engine": "llama-server",
     "model": "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
     "port": 8080,
-    "context_size": 4096
+    "context_size": 20480
   },
   "agent_core": {
     "openviking": "active",
