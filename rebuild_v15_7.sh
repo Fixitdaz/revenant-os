@@ -594,7 +594,7 @@ ff02::2     ip6-allrouters
 HOSTSEOF
 
 # Disable autologin so LightDM displays login greeter on boot
-# This gives the user access to their user account and the XFCE/i3 session selector
+# This gives the user access to their user account and the XFCE/i3 session selecto
 rm -f /mnt/target/etc/lightdm/lightdm.conf.d/*autologin*.conf
 rm -f /mnt/target/etc/lightdm/lightdm.conf.d/*live*.conf
 rm -f /mnt/target/etc/lightdm/lightdm.conf.d/*debian*.conf
@@ -609,13 +609,13 @@ for cf in /mnt/target/etc/lightdm/lightdm.conf.d/*.conf /mnt/target/usr/share/li
   fi
 done
 
-# Explicitly configure LightDM greeter to show user list and session picker
+# Explicitly configure LightDM greeter to show user list and session picke
 mkdir -p /mnt/target/etc/lightdm/lightdm.conf.d
 cat << 'GREETER_EOF' > /mnt/target/etc/lightdm/lightdm.conf.d/01-revenant-greeter.conf
 [Seat:*]
 autologin-user=
 autologin-guest=false
-greeter-session=lightdm-gtk-greeter
+greeter-session=lightdm-gtk-greete
 greeter-hide-users=false
 greeter-show-manual-login=true
 user-session=xfce
@@ -626,7 +626,7 @@ mkdir -p /mnt/target/usr/share/xsessions
 cat << 'I3_XSESSION' > /mnt/target/usr/share/xsessions/i3.desktop
 [Desktop Entry]
 Name=i3
-Comment=improved dynamic tiling window manager
+Comment=improved dynamic tiling window manage
 Exec=i3
 TryExec=i3
 Type=Application
