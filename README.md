@@ -2,7 +2,7 @@
 
 > **Sovereign, Local-First Agentic AI Linux Operating System for Panasonic Toughbooks & Field Laptops**
 
-[![Build Status](https://img.shields.io/badge/build-v15.5_pass-00f0ff?style=for-the-badge&logo=linux)](https://github.com/Fixitdaz/revenant-os)
+[![Build Status](https://img.shields.io/badge/build-v15.6_pass-00f0ff?style=for-the-badge&logo=linux)](https://github.com/Fixitdaz/revenant-os)
 [![Target](https://img.shields.io/badge/Hardware-Panasonic_Toughbook_CF--52-ff007f?style=for-the-badge&logo=panasonic)](https://github.com/Fixitdaz/revenant-os)
 [![Base](https://img.shields.io/badge/Kernel-Linux_6.1_Debian_Bookworm-purple?style=for-the-badge&logo=debian)](https://github.com/Fixitdaz/revenant-os)
 [![Local Engine](https://img.shields.io/badge/Local_LLM-Qwen2.5--Coder--1.5B_via_llama--server-brightgreen?style=for-the-badge)](https://github.com/Fixitdaz/revenant-os)
@@ -71,12 +71,12 @@ Instead of relying on mandatory cloud subscriptions, external API keys, or accou
 
 ## 🚀 Installation & Quick Start
 
-1. **Download the ISO**: Get the latest build (`revenant_os_toughbook_v15_5.iso`).
+1. **Download the ISO**: Get the latest build (`revenant_os_toughbook_v15_6.iso`).
 2. **Flash to USB**:
    - **Windows**: Use [Rufus](https://rufus.ie/) in *DD Mode* or [BalenaEtcher](https://etcher.balena.io/).
    - **Linux / macOS**:
      ```bash
-     sudo dd if=revenant_os_toughbook_v15_5.iso of=/dev/sdX bs=4M status=progress conv=fsync
+     sudo dd if=revenant_os_toughbook_v15_6.iso of=/dev/sdX bs=4M status=progress conv=fsync
      ```
 3. **Boot on Panasonic Toughbook CF-52**:
    - Insert USB into Toughbook USB port.
