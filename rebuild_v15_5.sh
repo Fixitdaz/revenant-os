@@ -124,6 +124,32 @@ mkdir -p "$PATCH_ROOT/etc/systemd/system/multi-user.target.wants"
 ln -sf /etc/systemd/system/llama-server.service "$PATCH_ROOT/etc/systemd/system/multi-user.target.wants/llama-server.service"
 ln -sf /etc/systemd/system/openviking.service "$PATCH_ROOT/etc/systemd/system/multi-user.target.wants/openviking.service"
 
+echo "[*] Ensuring kernel config files exist in /boot for initramfs-tools..."
+mkdir -p "$PATCH_ROOT/boot"
+for kimg in "$PATCH_ROOT/boot"/vmlinuz-*; do
+  if [ -f "$kimg" ]; then
+    kver=$(basename "$kimg" | sed 's/^vmlinuz-//')
+    cat << 'CFG_EOF' > "$PATCH_ROOT/boot/config-$kver"
+CONFIG_RD_GZIP=y
+CONFIG_RD_BZIP2=y
+CONFIG_RD_LZMA=y
+CONFIG_RD_XZ=y
+CONFIG_RD_LZO=y
+CONFIG_RD_LZ4=y
+CONFIG_RD_ZSTD=y
+CFG_EOF
+  fi
+done
+cat << 'CFG_EOF' > "$PATCH_ROOT/boot/config-6.1.0-50-amd64"
+CONFIG_RD_GZIP=y
+CONFIG_RD_BZIP2=y
+CONFIG_RD_LZMA=y
+CONFIG_RD_XZ=y
+CONFIG_RD_LZO=y
+CONFIG_RD_LZ4=y
+CONFIG_RD_ZSTD=y
+CFG_EOF
+
 echo "[*] Patching Hermes Agent context floor to 8000 tokens..."
 if [ -f "$PATCH_ROOT/usr/lib/node_modules/hermes-agent/runtime/hermes-agent/agent/model_metadata.py" ]; then
   sed -i "s/MINIMUM_CONTEXT_LENGTH = 64_000/MINIMUM_CONTEXT_LENGTH = 8_000/g" "$PATCH_ROOT/usr/lib/node_modules/hermes-agent/runtime/hermes-agent/agent/model_metadata.py"
@@ -543,6 +569,31 @@ if [ ! -f /mnt/target/usr/sbin/update-initramfs ] && [ -f /mnt/target/usr/sbin/u
   cp -a /mnt/target/usr/sbin/update-initramfs.orig.initramfs-tools /mnt/target/usr/sbin/update-initramfs
 fi
 chmod +x /mnt/target/usr/sbin/update-initramfs 2>/dev/null || true
+# Ensure /boot/config-* exists on installed disk so update-initramfs never fails on missing CONFIG_RD_*
+for kimg in /mnt/target/boot/vmlinuz-*; do
+  if [ -f "$kimg" ]; then
+    kver=$(basename "$kimg" | sed 's/^vmlinuz-//')
+    cat << 'CFG_EOF' > "/mnt/target/boot/config-$kver"
+CONFIG_RD_GZIP=y
+CONFIG_RD_BZIP2=y
+CONFIG_RD_LZMA=y
+CONFIG_RD_XZ=y
+CONFIG_RD_LZO=y
+CONFIG_RD_LZ4=y
+CONFIG_RD_ZSTD=y
+CFG_EOF
+  fi
+done
+cat << 'CFG_EOF' > "/mnt/target/boot/config-6.1.0-50-amd64"
+CONFIG_RD_GZIP=y
+CONFIG_RD_BZIP2=y
+CONFIG_RD_LZMA=y
+CONFIG_RD_XZ=y
+CONFIG_RD_LZO=y
+CONFIG_RD_LZ4=y
+CONFIG_RD_ZSTD=y
+CFG_EOF
+
 chroot /mnt/target update-initramfs -u -k all >> "$LOG" 2>&1 || true
 
 echo "90"; echo "# Installing GRUB bootloader..."
