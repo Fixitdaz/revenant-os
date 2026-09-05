@@ -14,6 +14,7 @@ set -e
 REPO_OWNER="Fixitdaz"
 REPO_NAME="revenant-os"
 RAW_BASE="https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/main"
+RAW_FALLBACK="https://github.com/$REPO_OWNER/$REPO_NAME/raw/main"
 LOCAL_VERSION_FILE="/etc/revenant/version.json"
 
 CYAN="\033[96m"
@@ -67,7 +68,8 @@ echo -e "${GREEN}[✓] Online connection verified.${RESET}"
 # Self-update check: ensure the OTA updater script is always running the latest version from GitHub
 if [ "$REVENANT_UPDATED" != "1" ]; then
   echo -e "${CYAN}[*] Checking for latest OTA updater script from GitHub...${RESET}"
-  if curl -fsSL --connect-timeout 5 "$RAW_BASE/tools/revenant-update" -o /tmp/revenant-update.new 2>/dev/null; then
+  if curl -fsSL -H "Cache-Control: no-cache" --connect-timeout 5 "$RAW_BASE/tools/revenant-update" -o /tmp/revenant-update.new 2>/dev/null || \
+     curl -fsSL -L -H "Cache-Control: no-cache" --connect-timeout 5 "$RAW_FALLBACK/tools/revenant-update" -o /tmp/revenant-update.new 2>/dev/null; then
     if [ -s /tmp/revenant-update.new ] && ! cmp -s /tmp/revenant-update.new "$0" 2>/dev/null; then
       cp /tmp/revenant-update.new /usr/local/bin/revenant-update
       chmod +x /usr/local/bin/revenant-update
@@ -98,7 +100,8 @@ CURRENT_BUILD=$(grep -oP '"build":\s*"?\K[0-9]+(\.[0-9]+)?' "$LOCAL_VERSION_FILE
 echo -e "${CYAN}[*] Current Installed Version: ${BOLD}v$CURRENT_VER (Build $CURRENT_BUILD)${RESET}"
 echo -e "${CYAN}[*] Querying remote release manifest from GitHub...${RESET}"
 
-REMOTE_MANIFEST=$(curl -fsSL --connect-timeout 10 "$RAW_BASE/version.json" 2>/dev/null || true)
+REMOTE_MANIFEST=$(curl -fsSL -H "Cache-Control: no-cache" --connect-timeout 10 "$RAW_BASE/version.json" 2>/dev/null || \
+                  curl -fsSL -L -H "Cache-Control: no-cache" --connect-timeout 10 "$RAW_FALLBACK/version.json" 2>/dev/null || true)
 
 if [ -z "$REMOTE_MANIFEST" ]; then
   echo -e "${YELLOW}[!] Could not fetch remote manifest (repository may be private or offline).${RESET}"
