@@ -111,7 +111,7 @@ After=network.target
 [Service]
 Type=simple
 Environment=LD_LIBRARY_PATH=/opt/llama.cpp
-ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --host 127.0.0.1 --port 8080 --ctx-size 4096 --threads 2 --n-gpu-layers 0
+ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --alias qwen2.5-coder-1.5b-instruct --host 127.0.0.1 --port 8080 --ctx-size 2048 --threads 2 -np 1 --no-cache-prompt -sps 0 --n-gpu-layers 0
 Restart=always
 RestartSec=3
 User=root
@@ -222,8 +222,6 @@ payload = json.dumps({
         {"role": "user", "content": prompt}
     ],
     "temperature": 0.6,
-    "presence_penalty": 0.1,
-    "frequency_penalty": 0.1,
     "max_tokens": 512
 }).encode('utf-8')
 
@@ -605,6 +603,35 @@ for cf in /mnt/target/etc/lightdm/lightdm.conf.d/*.conf /mnt/target/usr/share/li
     sed -i -E 's/^[[:space:]]*autologin-user-timeout[[:space:]]*=.*/#autologin-user-timeout=/' "$cf" 2>/dev/null || true
   fi
 done
+
+# Explicitly configure LightDM greeter to show user list and session picker
+mkdir -p /mnt/target/etc/lightdm/lightdm.conf.d
+cat << 'GREETER_EOF' > /mnt/target/etc/lightdm/lightdm.conf.d/01-revenant-greeter.conf
+[Seat:*]
+autologin-user=
+autologin-guest=false
+greeter-session=lightdm-gtk-greeter
+greeter-hide-users=false
+greeter-show-manual-login=true
+user-session=xfce
+GREETER_EOF
+
+# Ensure registered session files exist for both XFCE and i3 in LightDM
+mkdir -p /mnt/target/usr/share/xsessions
+cat << 'I3_XSESSION' > /mnt/target/usr/share/xsessions/i3.desktop
+[Desktop Entry]
+Name=i3
+Comment=improved dynamic tiling window manager
+Exec=i3
+TryExec=i3
+Type=Application
+DesktopNames=i3
+Keywords=tiling;wm;windowmanager;window;manager;
+I3_XSESSION
+
+if [ ! -f /mnt/target/usr/share/xsessions/xfce.desktop ] && [ -f /mnt/target/usr/share/xsessions/xubuntu.desktop ]; then
+  cp /mnt/target/usr/share/xsessions/xubuntu.desktop /mnt/target/usr/share/xsessions/xfce.desktop
+fi
 
 rm -f /mnt/target/etc/skel/Desktop/Install*.desktop
 rm -f "/mnt/target/home/$NEW_USER/Desktop/Install"*.desktop 2>/dev/null || true
