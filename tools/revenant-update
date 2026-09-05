@@ -164,6 +164,7 @@ User=root
 WantedBy=multi-user.target
 SVCEOF
 
+pkill -9 -f llama-server 2>/dev/null || true
 systemctl daemon-reload
 systemctl enable llama-server.service 2>/dev/null || true
 systemctl restart llama-server.service 2>/dev/null || true
@@ -438,16 +439,28 @@ for ddir in /etc/skel/Desktop /root/Desktop /home/*/Desktop; do
   fi
 done
 
-# 4. Disable live autologin so LightDM greeter displays on boot
-# This allows selecting user accounts and choosing between XFCE and i3 at login
+# 4. Disable live autologin and purge live-config so LightDM greeter displays on boot
 echo -e "${CYAN}  -> Configuring LightDM login screen (enabling user/session picker)...${RESET}"
+# Purge Debian live-config daemon if present so it cannot recreate autologin on reboot
+apt-get purge -y live-boot live-boot-doc live-config live-config-doc live-config-systemd live-tools 2>/dev/null || true
+systemctl disable live-config.service 2>/dev/null || true
+systemctl mask live-config.service 2>/dev/null || true
+rm -rf /lib/live /var/lib/live
+
+# Remove all autologin conf overrides
 rm -f /etc/lightdm/lightdm.conf.d/*autologin*.conf
-sed -i 's/^autologin-user=.*/#autologin-user=/' /etc/lightdm/lightdm.conf 2>/dev/null || true
-sed -i 's/^autologin-user-timeout=.*/#autologin-user-timeout=/' /etc/lightdm/lightdm.conf 2>/dev/null || true
-for cf in /etc/lightdm/lightdm.conf.d/*.conf; do
+rm -f /etc/lightdm/lightdm.conf.d/*live*.conf
+rm -f /etc/lightdm/lightdm.conf.d/*debian*.conf
+rm -f /usr/share/lightdm/lightdm.conf.d/*live*.conf
+rm -f /usr/share/lightdm/lightdm.conf.d/*autologin*.conf
+
+# Comment out any autologin lines in lightdm configs
+sed -i -E 's/^[[:space:]]*autologin-user[[:space:]]*=.*/#autologin-user=/' /etc/lightdm/lightdm.conf 2>/dev/null || true
+sed -i -E 's/^[[:space:]]*autologin-user-timeout[[:space:]]*=.*/#autologin-user-timeout=/' /etc/lightdm/lightdm.conf 2>/dev/null || true
+for cf in /etc/lightdm/lightdm.conf.d/*.conf /usr/share/lightdm/lightdm.conf.d/*.conf; do
   if [ -f "$cf" ]; then
-    sed -i 's/^autologin-user=.*/#autologin-user=/' "$cf" 2>/dev/null || true
-    sed -i 's/^autologin-user-timeout=.*/#autologin-user-timeout=/' "$cf" 2>/dev/null || true
+    sed -i -E 's/^[[:space:]]*autologin-user[[:space:]]*=.*/#autologin-user=/' "$cf" 2>/dev/null || true
+    sed -i -E 's/^[[:space:]]*autologin-user-timeout[[:space:]]*=.*/#autologin-user-timeout=/' "$cf" 2>/dev/null || true
   fi
 done
 
