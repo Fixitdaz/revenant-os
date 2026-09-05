@@ -28,11 +28,13 @@
 
 ## Booting on Panasonic Toughbook CF-52
 1. Plug the flashed USB stick into one of the Toughbook's USB ports.
-2. Power on the laptop and immediately tap the **F12** key repeatedly.
-3. In the boot device selection list, highlight **USB HDD** or your flash drive model, then press **Enter**.
-4. The high-definition **Revenant OS GRUB bootloader** will appear. Select `Revenant OS - Agentic Core`.
-5. The full-screen Revenant cyber boot splash will display as drivers load.
-6. The system automatically logs into the live environment.
+2. Power on the laptop and immediately tap the **F2** key repeatedly to enter the BIOS Setup Utility.
+3. Use the arrow keys to navigate to the **Boot** tab.
+4. Highlight **USB Drive** (or **USB HDD**) and press `F6` to move it to the top of the boot priority list.
+5. Press `F10` to save changes and exit.
+6. The high-definition **Revenant OS GRUB bootloader** will appear. Select `Revenant OS - Agentic Core`.
+7. The full-screen Revenant cyber boot splash will display as drivers load.
+8. The system automatically logs into the live environment.
 
 ---
 

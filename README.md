@@ -75,8 +75,8 @@ Instead of relying on mandatory cloud subscriptions, external API keys, or accou
      ```
 3. **Boot on Panasonic Toughbook CF-52**:
    - Insert USB into Toughbook USB port.
-   - Power on and tap `F12` to open the BIOS Boot Selection Menu.
-   - Select your USB drive and press `Enter`.
+   - Power on the laptop and tap `F2` to enter the BIOS Setup Utility.
+   - Navigate to the **Boot** menu, move your **USB Drive / USB HDD** to the top of the boot order, press `F10` to save and exit (or press `Enter` to boot directly).
 4. **Install to Internal Storage**:
    - Once on the desktop, double-click **"Install Revenant OS"**.
    - Select your target drive (e.g. `/dev/sda`), enter your desired username/password, and confirm.
