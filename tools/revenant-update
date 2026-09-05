@@ -88,15 +88,15 @@ if [ ! -f "$LOCAL_VERSION_FILE" ]; then
   cat << 'EOF' > "$LOCAL_VERSION_FILE"
 {
   "os_name": "Revenant OS",
-  "version": "1.0.0-rc15.6",
-  "build": "15.6",
+  "version": "1.0.0-rc15.7",
+  "build": "15.7",
   "release_date": "2026-09-05"
 }
 EOF
 fi
 
 CURRENT_VER=$(grep -oP '"version":\s*"\K[^"]+' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "1.0.0")
-CURRENT_BUILD=$(grep -oP '"build":\s*"?\K[0-9]+(\.[0-9]+)?' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "15.6")
+CURRENT_BUILD=$(grep -oP '"build":\s*"?\K[0-9]+(\.[0-9]+)?' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "15.7")
 
 echo -e "${CYAN}[*] Current Installed Version: ${BOLD}v$CURRENT_VER (Build $CURRENT_BUILD)${RESET}"
 echo -e "${CYAN}[*] Querying remote release manifest from GitHub...${RESET}"
@@ -622,8 +622,8 @@ echo -e "${GREEN}[✓] Security packages and hardware profiles synchronized.${RE
 # Update GRUB boot menu title to display current release
 if [ -f /boot/grub/grub.cfg ]; then
   echo -e "${CYAN}[*] Updating GRUB bootloader menu title...${RESET}"
-  sed -i -E 's/Revenant OS V[0-9.]+/Revenant OS V15.6/g' /boot/grub/grub.cfg 2>/dev/null || true
-  echo -e "${GREEN}[✓] GRUB bootloader title updated to Revenant OS V15.6.${RESET}"
+  sed -i -E 's/Revenant OS V[0-9.]+/Revenant OS V15.7/g' /boot/grub/grub.cfg 2>/dev/null || true
+  echo -e "${GREEN}[✓] GRUB bootloader title updated to Revenant OS V15.7.${RESET}"
 fi
 
 cat << EOF > "$LOCAL_VERSION_FILE"
