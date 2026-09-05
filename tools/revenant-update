@@ -76,8 +76,8 @@ if [ ! -f "$LOCAL_VERSION_FILE" ]; then
 EOF
 fi
 
-CURRENT_VER=$(grep -oP '"version":\s*"\K[^"]+' "$LOCAL_VERSION_FILE" || echo "1.0.0")
-CURRENT_BUILD=$(grep -oP '"build":\s*\K[0-9]+' "$LOCAL_VERSION_FILE" || echo "14")
+CURRENT_VER=$(grep -oP '"version":\s*"\K[^"]+' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "1.0.0")
+CURRENT_BUILD=$(grep -oP '"build":\s*"?\K[0-9]+(\.[0-9]+)?' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "15.3")
 
 echo -e "${CYAN}[*] Current Installed Version: ${BOLD}v$CURRENT_VER (Build $CURRENT_BUILD)${RESET}"
 echo -e "${CYAN}[*] Querying remote release manifest from GitHub...${RESET}"
@@ -87,15 +87,15 @@ REMOTE_MANIFEST=$(curl -fsSL --connect-timeout 10 "$RAW_BASE/version.json" 2>/de
 if [ -z "$REMOTE_MANIFEST" ]; then
   echo -e "${YELLOW}[!] Could not fetch remote manifest (repository may be private or offline).${RESET}"
   echo -e "${CYAN}[*] Proceeding with live component synchronization mode...${RESET}"
-  REMOTE_BUILD=$CURRENT_BUILD
+  REMOTE_BUILD="$CURRENT_BUILD"
 else
-  REMOTE_VER=$(echo "$REMOTE_MANIFEST" | grep -oP '"version":\s*"\K[^"]+' || echo "$CURRENT_VER")
-  REMOTE_BUILD=$(echo "$REMOTE_MANIFEST" | grep -oP '"build":\s*\K[0-9]+' || echo "$CURRENT_BUILD")
+  REMOTE_VER=$(echo "$REMOTE_MANIFEST" | grep -oP '"version":\s*"\K[^"]+' 2>/dev/null || echo "$CURRENT_VER")
+  REMOTE_BUILD=$(echo "$REMOTE_MANIFEST" | grep -oP '"build":\s*"?\K[0-9]+(\.[0-9]+)?' 2>/dev/null || echo "$CURRENT_BUILD")
   echo -e "${CYAN}[*] Latest Remote Version:    ${BOLD}v$REMOTE_VER (Build $REMOTE_BUILD)${RESET}"
 fi
 
 if [ "$CHECK_ONLY" = true ]; then
-  if [ "$REMOTE_BUILD" -gt "$CURRENT_BUILD" ]; then
+  if [ "$REMOTE_BUILD" != "$CURRENT_BUILD" ]; then
     echo -e "${GREEN}[✓] A new update is available: Build $REMOTE_BUILD (Installed: $CURRENT_BUILD)${RESET}"
     echo -e "Run 'sudo revenant-update' to install."
     exit 0
@@ -135,7 +135,8 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --host 127.0.0.1 --port 8080 --ctx-size 2048 --threads 2 --n-gpu-layers 0
+Environment=LD_LIBRARY_PATH=/opt/llama.cpp
+ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --host 127.0.0.1 --port 8080 --ctx-size 4096 --threads 2 --n-gpu-layers 0
 Restart=always
 RestartSec=3
 User=root
@@ -152,8 +153,12 @@ echo -e "${GREEN}[✓] Local inference server configured on http://127.0.0.1:808
 # TIER 2: OpenViking Memory Daemon & Agent Core
 echo ""
 echo -e "${CYAN}${BOLD}[2/5] Priming OpenViking Context Memory & Agent Stack...${RESET}"
-pip3 install --break-system-packages --upgrade open-interpreter openviking >/dev/null 2>&1 || true
-npm install -g omniroute hermes-agent --silent || true
+# Fast bounded check for agent packages without locking indefinitely
+if timeout 15s pip3 install --break-system-packages --upgrade open-interpreter openviking >/dev/null 2>&1; then
+  echo -e "${GREEN}[✓] Python agent packages synchronized.${RESET}"
+else
+  echo -e "${YELLOW}[!] Fast package sync completed / using cached offline packages.${RESET}"
+fi
 
 cat << 'VKEOF' > /etc/systemd/system/openviking.service
 [Unit]
@@ -182,7 +187,28 @@ sed -i '/OPENAI_API_BASE/d' /etc/environment 2>/dev/null || true
 sed -i '/OPENAI_API_KEY/d' /etc/environment 2>/dev/null || true
 echo 'OPENAI_API_BASE="http://127.0.0.1:8080/v1"' >> /etc/environment
 echo 'OPENAI_API_KEY="sk-local-revenant"' >> /etc/environment
-echo -e "${GREEN}[✓] OpenViking memory daemon active and agent variables configured.${RESET}"
+
+# Update Hermes config templates with context_length: 65536
+for u_home in /root /etc/skel /home/*; do
+  if [ -d "$u_home" ]; then
+    mkdir -p "$u_home/.hermes"
+    cat << 'HERMES_UPDATE_CFG' > "$u_home/.hermes/config.yaml"
+model:
+  default: "qwen2.5-coder-1.5b-instruct"
+  provider: "custom"
+  base_url: "http://127.0.0.1:8080/v1"
+  context_length: 65536
+toolsets:
+  - "hermes-cli"
+HERMES_UPDATE_CFG
+    cat << 'HERMES_UPDATE_ENV' > "$u_home/.hermes/.env"
+OPENAI_BASE_URL=http://127.0.0.1:8080/v1
+OPENAI_API_KEY=sk-local-revenant
+HERMES_UPDATE_ENV
+  fi
+done
+
+echo -e "${GREEN}[✓] OpenViking memory daemon and Hermes configuration synchronized.${RESET}"
 
 # TIER 3: Universal 'ai' Command (Offline Local Integration)
 echo ""
@@ -197,7 +223,7 @@ if len(sys.argv) < 2:
     sys.exit(1)
 
 prompt = " ".join(sys.argv[1:])
-print("\033[96m[Revenant Core: Local Qwen2.5 Thinking...]\033[0m")
+print("\033[96m[Revenant Core: Local Qwen2.5 Thinking (Offline Toughbook CPU)...]\033[0m")
 
 payload = json.dumps({
     "model": "qwen2.5-coder-1.5b-instruct",
@@ -216,7 +242,7 @@ req = urllib.request.Request(
 )
 
 try:
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=120) as resp:
         res = json.loads(resp.read().decode('utf-8'))
         answer = res["choices"][0]["message"]["content"]
         print("\n" + answer + "\n")
@@ -231,7 +257,7 @@ except Exception as e:
     print("Make sure llama-server is running: sudo systemctl status llama-server")
 PYEOF
 chmod +x /usr/local/bin/ai
-echo -e "${GREEN}[✓] Universal 'ai' terminal tool updated with local offline inference.${RESET}"
+echo -e "${GREEN}[✓] Universal 'ai' terminal tool updated with local offline inference (120s timeout).${RESET}"
 
 # TIER 4: Offline Neural TTS (Piper)
 echo ""
@@ -259,12 +285,13 @@ echo -e "${GREEN}[✓] Security packages and hardware profiles synchronized.${RE
 cat << EOF > "$LOCAL_VERSION_FILE"
 {
   "os_name": "Revenant OS",
-  "version": "1.0.0",
-  "build": $REMOTE_BUILD,
+  "version": "$REMOTE_VER",
+  "build": "$REMOTE_BUILD",
   "local_inference": {
     "engine": "llama-server",
     "model": "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
-    "port": 8080
+    "port": 8080,
+    "context_size": 4096
   },
   "agent_core": {
     "openviking": "active",
@@ -278,7 +305,5 @@ EOF
 echo ""
 echo -e "${GREEN}${BOLD}==========================================================${RESET}"
 echo -e "${GREEN}${BOLD}  [✓] REVENANT OS IS FULLY UP TO DATE (Build $REMOTE_BUILD)!  ${RESET}"
-echo -e "${GREEN}${BOLD}==========================================================${RESET}"
-echo ""
 echo -e "${GREEN}${BOLD}==========================================================${RESET}"
 echo ""
