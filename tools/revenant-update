@@ -9,7 +9,8 @@
 #   4. Upstream Linux Kernel & Security Patches
 # ==============================================================================
 
-set -e
+# Disable strict exit-on-error so non-critical sub-commands never abort the update pipeline
+set +e
 
 REPO_OWNER="Fixitdaz"
 REPO_NAME="revenant-os"
@@ -70,7 +71,7 @@ if [ "$REVENANT_UPDATED" != "1" ]; then
   echo -e "${CYAN}[*] Checking for latest OTA updater script from GitHub...${RESET}"
   if curl -fsSL -H "Cache-Control: no-cache" --connect-timeout 5 "$RAW_BASE/tools/revenant-update" -o /tmp/revenant-update.new 2>/dev/null || \
      curl -fsSL -L -H "Cache-Control: no-cache" --connect-timeout 5 "$RAW_FALLBACK/tools/revenant-update" -o /tmp/revenant-update.new 2>/dev/null; then
-    if [ -s /tmp/revenant-update.new ] && ! cmp -s /tmp/revenant-update.new "$0" 2>/dev/null; then
+    if [ -s /tmp/revenant-update.new ] && ! cmp -s /tmp/revenant-update.new "/usr/local/bin/revenant-update" 2>/dev/null; then
       cp /tmp/revenant-update.new /usr/local/bin/revenant-update
       chmod +x /usr/local/bin/revenant-update
       rm -f /tmp/revenant-update.new
@@ -87,15 +88,15 @@ if [ ! -f "$LOCAL_VERSION_FILE" ]; then
   cat << 'EOF' > "$LOCAL_VERSION_FILE"
 {
   "os_name": "Revenant OS",
-  "version": "1.0.0",
-  "build": 14,
-  "release_date": "2026-09-04"
+  "version": "1.0.0-rc15.6",
+  "build": "15.6",
+  "release_date": "2026-09-05"
 }
 EOF
 fi
 
 CURRENT_VER=$(grep -oP '"version":\s*"\K[^"]+' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "1.0.0")
-CURRENT_BUILD=$(grep -oP '"build":\s*"?\K[0-9]+(\.[0-9]+)?' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "15.5")
+CURRENT_BUILD=$(grep -oP '"build":\s*"?\K[0-9]+(\.[0-9]+)?' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "15.6")
 
 echo -e "${CYAN}[*] Current Installed Version: ${BOLD}v$CURRENT_VER (Build $CURRENT_BUILD)${RESET}"
 echo -e "${CYAN}[*] Querying remote release manifest from GitHub...${RESET}"
@@ -123,6 +124,33 @@ if [ "$CHECK_ONLY" = true ]; then
     exit 0
   fi
 fi
+
+# TIER 0: Login Greeter & Desktop Account Selection (Purge Stuck Autologin)
+echo ""
+echo -e "${CYAN}${BOLD}[0/5] Configuring LightDM Login Screen & Account Selection...${RESET}"
+# Purge Debian live-config daemon so it cannot force or regenerate autologin on reboot
+apt-get purge -y live-boot live-boot-doc live-config live-config-doc live-config-systemd live-tools 2>/dev/null || true
+systemctl disable live-config.service 2>/dev/null || true
+systemctl mask live-config.service 2>/dev/null || true
+rm -rf /lib/live /var/lib/live
+
+# Remove all autologin conf overrides
+rm -f /etc/lightdm/lightdm.conf.d/*autologin*.conf
+rm -f /etc/lightdm/lightdm.conf.d/*live*.conf
+rm -f /etc/lightdm/lightdm.conf.d/*debian*.conf
+rm -f /usr/share/lightdm/lightdm.conf.d/*live*.conf
+rm -f /usr/share/lightdm/lightdm.conf.d/*autologin*.conf
+
+# Comment out any autologin lines in lightdm configs
+sed -i -E 's/^[[:space:]]*autologin-user[[:space:]]*=.*/#autologin-user=/' /etc/lightdm/lightdm.conf 2>/dev/null || true
+sed -i -E 's/^[[:space:]]*autologin-user-timeout[[:space:]]*=.*/#autologin-user-timeout=/' /etc/lightdm/lightdm.conf 2>/dev/null || true
+for cf in /etc/lightdm/lightdm.conf.d/*.conf /usr/share/lightdm/lightdm.conf.d/*.conf; do
+  if [ -f "$cf" ]; then
+    sed -i -E 's/^[[:space:]]*autologin-user[[:space:]]*=.*/#autologin-user=/' "$cf" 2>/dev/null || true
+    sed -i -E 's/^[[:space:]]*autologin-user-timeout[[:space:]]*=.*/#autologin-user-timeout=/' "$cf" 2>/dev/null || true
+  fi
+done
+echo -e "${GREEN}[✓] LightDM login screen restored: prompt for username and password on startup.${RESET}"
 
 # TIER 1: Offline Local Inference Engine (llama-server & Qwen 2.5)
 echo ""
