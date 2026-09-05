@@ -150,13 +150,14 @@ CONFIG_RD_LZ4=y
 CONFIG_RD_ZSTD=y
 CFG_EOF
 
-echo "[*] Patching Hermes Agent context floor to 8000 tokens..."
+echo "[*] Patching Hermes Agent context floor to 4000 tokens..."
 if [ -f "$PATCH_ROOT/usr/lib/node_modules/hermes-agent/runtime/hermes-agent/agent/model_metadata.py" ]; then
-  sed -i "s/MINIMUM_CONTEXT_LENGTH = 64_000/MINIMUM_CONTEXT_LENGTH = 8_000/g" "$PATCH_ROOT/usr/lib/node_modules/hermes-agent/runtime/hermes-agent/agent/model_metadata.py"
+  sed -i "s/MINIMUM_CONTEXT_LENGTH = 64_000/MINIMUM_CONTEXT_LENGTH = 4_000/g" "$PATCH_ROOT/usr/lib/node_modules/hermes-agent/runtime/hermes-agent/agent/model_metadata.py"
+  sed -i "s/MINIMUM_CONTEXT_LENGTH = 8_000/MINIMUM_CONTEXT_LENGTH = 4_000/g" "$PATCH_ROOT/usr/lib/node_modules/hermes-agent/runtime/hermes-agent/agent/model_metadata.py"
 fi
 
 echo "[*] Configuring Hermes Agent and OpenInterpreter default offline configs..."
-# Pre-seed Hermes default configuration pointing to local Qwen model on llama-server with 64k context & aux compression
+# Pre-seed Hermes default configuration pointing to local Qwen model on llama-server with 4k context & aux compression
 for target_dir in "$PATCH_ROOT/root/.hermes" "$PATCH_ROOT/etc/skel/.hermes" "$PATCH_ROOT/home/user/.hermes" "$PATCH_ROOT/home/revenant/.hermes"; do
   mkdir -p "$target_dir"
   cat << 'HERMES_CFG' > "$target_dir/config.yaml"
@@ -164,7 +165,7 @@ model:
   default: "qwen2.5-coder-1.5b-instruct"
   provider: "custom"
   base_url: "http://127.0.0.1:8080/v1"
-  context_length: 20480
+  context_length: 4096
 custom_providers:
   - name: "local"
     base_url: "http://127.0.0.1:8080/v1"
