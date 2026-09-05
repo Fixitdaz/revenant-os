@@ -591,12 +591,15 @@ HOSTSEOF
 # This gives the user access to their user account and the XFCE/i3 session selector
 rm -f /mnt/target/etc/lightdm/lightdm.conf.d/*autologin*.conf
 rm -f /mnt/target/etc/lightdm/lightdm.conf.d/*live*.conf
-sed -i 's/^autologin-user=.*/#autologin-user=/' /mnt/target/etc/lightdm/lightdm.conf 2>/dev/null || true
-sed -i 's/^autologin-user-timeout=.*/#autologin-user-timeout=/' /mnt/target/etc/lightdm/lightdm.conf 2>/dev/null || true
-for cf in /mnt/target/etc/lightdm/lightdm.conf.d/*.conf; do
+rm -f /mnt/target/etc/lightdm/lightdm.conf.d/*debian*.conf
+rm -f /mnt/target/usr/share/lightdm/lightdm.conf.d/*live*.conf
+rm -f /mnt/target/usr/share/lightdm/lightdm.conf.d/*autologin*.conf
+sed -i -E 's/^[[:space:]]*autologin-user[[:space:]]*=.*/#autologin-user=/' /mnt/target/etc/lightdm/lightdm.conf 2>/dev/null || true
+sed -i -E 's/^[[:space:]]*autologin-user-timeout[[:space:]]*=.*/#autologin-user-timeout=/' /mnt/target/etc/lightdm/lightdm.conf 2>/dev/null || true
+for cf in /mnt/target/etc/lightdm/lightdm.conf.d/*.conf /mnt/target/usr/share/lightdm/lightdm.conf.d/*.conf; do
   if [ -f "$cf" ]; then
-    sed -i 's/^autologin-user=.*/#autologin-user=/' "$cf" 2>/dev/null || true
-    sed -i 's/^autologin-user-timeout=.*/#autologin-user-timeout=/' "$cf" 2>/dev/null || true
+    sed -i -E 's/^[[:space:]]*autologin-user[[:space:]]*=.*/#autologin-user=/' "$cf" 2>/dev/null || true
+    sed -i -E 's/^[[:space:]]*autologin-user-timeout[[:space:]]*=.*/#autologin-user-timeout=/' "$cf" 2>/dev/null || true
   fi
 done
 
