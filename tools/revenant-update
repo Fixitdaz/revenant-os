@@ -361,6 +361,37 @@ echo -e "${CYAN}${BOLD}[5/5] Checking Hardware Drivers & Security Patches...${RE
 if dmidecode 2>/dev/null | grep -iq "Panasonic"; then
   modprobe panasonic-laptop 2>/dev/null || true
 fi
+
+# Ensure kernel config exists so update-initramfs never fails on missing CONFIG_RD_*
+for kimg in /boot/vmlinuz-*; do
+  if [ -f "$kimg" ]; then
+    kver=$(basename "$kimg" | sed 's/^vmlinuz-//')
+    kcfg="/boot/config-$kver"
+    if [ ! -f "$kcfg" ]; then
+      cat << 'CFG_EOF' > "$kcfg"
+CONFIG_RD_GZIP=y
+CONFIG_RD_BZIP2=y
+CONFIG_RD_LZMA=y
+CONFIG_RD_XZ=y
+CONFIG_RD_LZO=y
+CONFIG_RD_LZ4=y
+CONFIG_RD_ZSTD=y
+CFG_EOF
+    fi
+  fi
+done
+if [ -n "$(uname -r 2>/dev/null)" ] && [ ! -f "/boot/config-$(uname -r)" ]; then
+  cat << 'CFG_EOF' > "/boot/config-$(uname -r)"
+CONFIG_RD_GZIP=y
+CONFIG_RD_BZIP2=y
+CONFIG_RD_LZMA=y
+CONFIG_RD_XZ=y
+CONFIG_RD_LZO=y
+CONFIG_RD_LZ4=y
+CONFIG_RD_ZSTD=y
+CFG_EOF
+fi
+
 if [ -f /usr/sbin/update-initramfs.orig.initramfs-tools ]; then
   dpkg-divert --remove --rename /usr/sbin/update-initramfs 2>/dev/null || true
   if [ ! -f /usr/sbin/update-initramfs ] && [ -f /usr/sbin/update-initramfs.orig.initramfs-tools ]; then
@@ -368,6 +399,10 @@ if [ -f /usr/sbin/update-initramfs.orig.initramfs-tools ]; then
   fi
   chmod +x /usr/sbin/update-initramfs 2>/dev/null || true
 fi
+
+# Unstick any pending dpkg triggers before package management
+dpkg --configure -a 2>/dev/null || true
+
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get upgrade -y -qq || true
