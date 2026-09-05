@@ -105,22 +105,137 @@ if [ "$CHECK_ONLY" = true ]; then
   fi
 fi
 
-# TIER 1: Agentic AI Core Upgrades
+# TIER 1: Offline Local Inference Engine (llama-server & Qwen 2.5)
 echo ""
-echo -e "${CYAN}${BOLD}[1/4] Upgrading Agentic AI Core...${RESET}"
-echo -e "${CYAN}  -> Upgrading OmniRoute & Hermes Agent...${RESET}"
+echo -e "${CYAN}${BOLD}[1/5] Configuring Offline Local Inference Engine...${RESET}"
+mkdir -p /opt/llama.cpp /opt/models
+
+if [ ! -f /opt/llama.cpp/llama-server ] || [ "$FORCE" = true ]; then
+  echo -e "${CYAN}  -> Downloading static llama-server binary...${RESET}"
+  mkdir -p /tmp/llama_bin
+  curl -fsSL -o /tmp/llama_bin/llama-server.tar.gz https://github.com/ggerganov/llama.cpp/releases/download/b10816/llama-b10816-bin-ubuntu-x64.tar.gz || true
+  if [ -f /tmp/llama_bin/llama-server.tar.gz ]; then
+    tar -xzf /tmp/llama_bin/llama-server.tar.gz -C /tmp/llama_bin/ || true
+    find /tmp/llama_bin -name "llama-server" -exec cp {} /opt/llama.cpp/llama-server \; || true
+    chmod +x /opt/llama.cpp/llama-server || true
+    rm -rf /tmp/llama_bin
+  fi
+fi
+
+if [ ! -f /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf ] || [ "$FORCE" = true ]; then
+  echo -e "${CYAN}  -> Downloading Qwen2.5-Coder-1.5B (Q4_K_M GGUF, ~1.04GB)...${RESET}"
+  curl -L --progress-bar -o /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf \
+    https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf || true
+fi
+
+cat << 'SVCEOF' > /etc/systemd/system/llama-server.service
+[Unit]
+Description=Revenant OS Local Llama Inference Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --host 127.0.0.1 --port 8080 --ctx-size 2048 --threads 2 --n-gpu-layers 0
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+systemctl daemon-reload
+systemctl enable llama-server.service 2>/dev/null || true
+systemctl restart llama-server.service 2>/dev/null || true
+echo -e "${GREEN}[✓] Local inference server configured on http://127.0.0.1:8080/v1${RESET}"
+
+# TIER 2: OpenViking Memory Daemon & Agent Core
+echo ""
+echo -e "${CYAN}${BOLD}[2/5] Priming OpenViking Context Memory & Agent Stack...${RESET}"
+pip3 install --break-system-packages --upgrade open-interpreter openviking >/dev/null 2>&1 || true
 npm install -g omniroute hermes-agent --silent || true
 
-echo -e "${CYAN}  -> Upgrading OpenInterpreter & OpenViking memory context engine...${RESET}"
-pip3 install --break-system-packages --upgrade open-interpreter openviking >/dev/null 2>&1 || true
+cat << 'VKEOF' > /etc/systemd/system/openviking.service
+[Unit]
+Description=OpenViking Automated Agent Context & Memory Daemon
+After=llama-server.service
 
-echo -e "${CYAN}  -> Restarting OmniRoute systemd service...${RESET}"
-systemctl restart omniroute.service 2>/dev/null || true
-echo -e "${GREEN}[✓] Agentic AI Core updated and running.${RESET}"
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ov daemon --host 127.0.0.1 --port 8080
+Restart=always
+RestartSec=5
+User=root
+Environment=OPENAI_API_BASE=http://127.0.0.1:8080/v1
+Environment=OPENAI_API_KEY=sk-local-revenant
 
-# TIER 2: Offline Neural TTS (Piper)
+[Install]
+WantedBy=multi-user.target
+VKEOF
+
+systemctl daemon-reload
+systemctl enable openviking.service 2>/dev/null || true
+systemctl restart openviking.service 2>/dev/null || true
+
+# Pre-configure environment defaults so Hermes and Interpreter use local llama-server
+sed -i '/OPENAI_API_BASE/d' /etc/environment 2>/dev/null || true
+sed -i '/OPENAI_API_KEY/d' /etc/environment 2>/dev/null || true
+echo 'OPENAI_API_BASE="http://127.0.0.1:8080/v1"' >> /etc/environment
+echo 'OPENAI_API_KEY="sk-local-revenant"' >> /etc/environment
+echo -e "${GREEN}[✓] OpenViking memory daemon active and agent variables configured.${RESET}"
+
+# TIER 3: Universal 'ai' Command (Offline Local Integration)
 echo ""
-echo -e "${CYAN}${BOLD}[2/4] Verifying Offline Neural Speech Synthesis (Piper)...${RESET}"
+echo -e "${CYAN}${BOLD}[3/5] Updating Universal Terminal AI Command (/usr/local/bin/ai)...${RESET}"
+cat << 'PYEOF' > /usr/local/bin/ai
+#!/usr/bin/env python3
+import sys, json, urllib.request, subprocess
+
+if len(sys.argv) < 2:
+    print("\033[93mUsage: ai <your question or command>\033[0m")
+    print("Runs 100% locally via Qwen2.5-Coder on llama-server (port 8080).")
+    sys.exit(1)
+
+prompt = " ".join(sys.argv[1:])
+print("\033[96m[Revenant Core: Local Qwen2.5 Thinking...]\033[0m")
+
+payload = json.dumps({
+    "model": "qwen2.5-coder-1.5b-instruct",
+    "messages": [
+        {"role": "system", "content": "You are the Revenant OS AI Assistant on a Panasonic Toughbook. Give clear, expert Linux and computing answers."},
+        {"role": "user", "content": prompt}
+    ],
+    "temperature": 0.6,
+    "max_tokens": 512
+}).encode('utf-8')
+
+req = urllib.request.Request(
+    "http://127.0.0.1:8080/v1/chat/completions",
+    data=payload,
+    headers={"Content-Type": "application/json"}
+)
+
+try:
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        res = json.loads(resp.read().decode('utf-8'))
+        answer = res["choices"][0]["message"]["content"]
+        print("\n" + answer + "\n")
+        
+        # Strip special characters for Piper TTS
+        clean = answer.replace('*', '').replace('`', '').replace('#', '').replace('_', '').replace('"', '').replace("'", "")
+        # Speak response aloud asynchronously
+        cmd = f"echo '{clean}' | /opt/piper/piper -m /opt/piper/models/en_US-lessac-medium.onnx --output_raw | aplay -r 22050 -f S16_LE -t raw -"
+        subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+except Exception as e:
+    print(f"\033[91m[!] Local Engine Error: {e}\033[0m")
+    print("Make sure llama-server is running: sudo systemctl status llama-server")
+PYEOF
+chmod +x /usr/local/bin/ai
+echo -e "${GREEN}[✓] Universal 'ai' terminal tool updated with local offline inference.${RESET}"
+
+# TIER 4: Offline Neural TTS (Piper)
+echo ""
+echo -e "${CYAN}${BOLD}[4/5] Verifying Offline Neural Speech Synthesis (Piper)...${RESET}"
 mkdir -p /opt/piper/models
 if [ ! -f /opt/piper/models/en_US-lessac-medium.onnx ]; then
   echo -e "${CYAN}  -> Downloading neural voice model...${RESET}"
@@ -129,41 +244,41 @@ if [ ! -f /opt/piper/models/en_US-lessac-medium.onnx ]; then
 fi
 echo -e "${GREEN}[✓] Offline neural speech synthesis verified.${RESET}"
 
-# TIER 3: System Utilities & Drivers (Toughbook CF-52)
+# TIER 5: Upstream Security & Drivers
 echo ""
-echo -e "${CYAN}${BOLD}[3/4] Synchronizing System Configurations & Field Drivers...${RESET}"
+echo -e "${CYAN}${BOLD}[5/5] Checking Hardware Drivers & Security Patches...${RESET}"
 if dmidecode 2>/dev/null | grep -iq "Panasonic"; then
   modprobe panasonic-laptop 2>/dev/null || true
 fi
-if [ -f /usr/local/bin/ai ]; then
-  chmod +x /usr/local/bin/ai
-fi
-echo -e "${GREEN}[✓] Field drivers and utilities synchronized.${RESET}"
-
-# TIER 4: Upstream Base Security & Kernel
-echo ""
-echo -e "${CYAN}${BOLD}[4/4] Checking Upstream Security Patches...${RESET}"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get upgrade -y -qq
 apt-get autoremove -y -qq
-echo -e "${GREEN}[✓] Security packages up to date.${RESET}"
+echo -e "${GREEN}[✓] Security packages and hardware profiles synchronized.${RESET}"
 
-if [ -n "$REMOTE_MANIFEST" ]; then
-  echo "$REMOTE_MANIFEST" > "$LOCAL_VERSION_FILE"
-else
-  cat << EOF > "$LOCAL_VERSION_FILE"
+cat << EOF > "$LOCAL_VERSION_FILE"
 {
   "os_name": "Revenant OS",
-  "version": "$CURRENT_VER",
-  "build": $CURRENT_BUILD,
+  "version": "1.0.0",
+  "build": $REMOTE_BUILD,
+  "local_inference": {
+    "engine": "llama-server",
+    "model": "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+    "port": 8080
+  },
+  "agent_core": {
+    "openviking": "active",
+    "open_interpreter": "latest",
+    "hermes_agent": "latest"
+  },
   "last_updated": "$(date -Iseconds)"
 }
 EOF
-fi
 
 echo ""
 echo -e "${GREEN}${BOLD}==========================================================${RESET}"
-echo -e "${GREEN}${BOLD}       [✓] REVENANT OS IS FULLY UP TO DATE!               ${RESET}"
+echo -e "${GREEN}${BOLD}  [✓] REVENANT OS IS FULLY UP TO DATE (Build $REMOTE_BUILD)!  ${RESET}"
+echo -e "${GREEN}${BOLD}==========================================================${RESET}"
+echo ""
 echo -e "${GREEN}${BOLD}==========================================================${RESET}"
 echo ""

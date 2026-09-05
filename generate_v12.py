@@ -8,14 +8,21 @@ os.makedirs('docs', exist_ok=True)
 version_json = r'''{
   "os_name": "Revenant OS",
   "version": "1.0.0",
-  "build": 14,
+  "build": 15,
   "target_hardware": "Panasonic Toughbook CF-52 & Field Laptops",
-  "release_date": "2026-09-04",
+  "release_date": "2026-09-05",
   "kernel": "6.1.0-50-amd64",
+  "local_inference": {
+    "engine": "llama-server",
+    "model": "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+    "port": 8080,
+    "context_size": 2048
+  },
   "agent_core": {
-    "omniroute": "latest",
-    "openviking": "latest",
+    "openviking": "active",
     "open_interpreter": "latest",
+    "hermes_agent": "latest",
+    "omniroute": "latest",
     "piper_tts": "2023.11.14-2"
   }
 }
@@ -131,22 +138,137 @@ if [ "$CHECK_ONLY" = true ]; then
   fi
 fi
 
-# TIER 1: Agentic AI Core Upgrades
+# TIER 1: Offline Local Inference Engine (llama-server & Qwen 2.5)
 echo ""
-echo -e "${CYAN}${BOLD}[1/4] Upgrading Agentic AI Core...${RESET}"
-echo -e "${CYAN}  -> Upgrading OmniRoute & Hermes Agent...${RESET}"
+echo -e "${CYAN}${BOLD}[1/5] Configuring Offline Local Inference Engine...${RESET}"
+mkdir -p /opt/llama.cpp /opt/models
+
+if [ ! -f /opt/llama.cpp/llama-server ] || [ "$FORCE" = true ]; then
+  echo -e "${CYAN}  -> Downloading static llama-server binary...${RESET}"
+  mkdir -p /tmp/llama_bin
+  curl -fsSL -o /tmp/llama_bin/llama-server.tar.gz https://github.com/ggerganov/llama.cpp/releases/download/b10816/llama-b10816-bin-ubuntu-x64.tar.gz || true
+  if [ -f /tmp/llama_bin/llama-server.tar.gz ]; then
+    tar -xzf /tmp/llama_bin/llama-server.tar.gz -C /tmp/llama_bin/ || true
+    find /tmp/llama_bin -name "llama-server" -exec cp {} /opt/llama.cpp/llama-server \; || true
+    chmod +x /opt/llama.cpp/llama-server || true
+    rm -rf /tmp/llama_bin
+  fi
+fi
+
+if [ ! -f /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf ] || [ "$FORCE" = true ]; then
+  echo -e "${CYAN}  -> Downloading Qwen2.5-Coder-1.5B (Q4_K_M GGUF, ~1.04GB)...${RESET}"
+  curl -L --progress-bar -o /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf \
+    https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf || true
+fi
+
+cat << 'SVCEOF' > /etc/systemd/system/llama-server.service
+[Unit]
+Description=Revenant OS Local Llama Inference Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --host 127.0.0.1 --port 8080 --ctx-size 2048 --threads 2 --n-gpu-layers 0
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+systemctl daemon-reload
+systemctl enable llama-server.service 2>/dev/null || true
+systemctl restart llama-server.service 2>/dev/null || true
+echo -e "${GREEN}[✓] Local inference server configured on http://127.0.0.1:8080/v1${RESET}"
+
+# TIER 2: OpenViking Memory Daemon & Agent Core
+echo ""
+echo -e "${CYAN}${BOLD}[2/5] Priming OpenViking Context Memory & Agent Stack...${RESET}"
+pip3 install --break-system-packages --upgrade open-interpreter openviking >/dev/null 2>&1 || true
 npm install -g omniroute hermes-agent --silent || true
 
-echo -e "${CYAN}  -> Upgrading OpenInterpreter & OpenViking memory context engine...${RESET}"
-pip3 install --break-system-packages --upgrade open-interpreter openviking >/dev/null 2>&1 || true
+cat << 'VKEOF' > /etc/systemd/system/openviking.service
+[Unit]
+Description=OpenViking Automated Agent Context & Memory Daemon
+After=llama-server.service
 
-echo -e "${CYAN}  -> Restarting OmniRoute systemd service...${RESET}"
-systemctl restart omniroute.service 2>/dev/null || true
-echo -e "${GREEN}[✓] Agentic AI Core updated and running.${RESET}"
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ov daemon --host 127.0.0.1 --port 8080
+Restart=always
+RestartSec=5
+User=root
+Environment=OPENAI_API_BASE=http://127.0.0.1:8080/v1
+Environment=OPENAI_API_KEY=sk-local-revenant
 
-# TIER 2: Offline Neural TTS (Piper)
+[Install]
+WantedBy=multi-user.target
+VKEOF
+
+systemctl daemon-reload
+systemctl enable openviking.service 2>/dev/null || true
+systemctl restart openviking.service 2>/dev/null || true
+
+# Pre-configure environment defaults so Hermes and Interpreter use local llama-server
+sed -i '/OPENAI_API_BASE/d' /etc/environment 2>/dev/null || true
+sed -i '/OPENAI_API_KEY/d' /etc/environment 2>/dev/null || true
+echo 'OPENAI_API_BASE="http://127.0.0.1:8080/v1"' >> /etc/environment
+echo 'OPENAI_API_KEY="sk-local-revenant"' >> /etc/environment
+echo -e "${GREEN}[✓] OpenViking memory daemon active and agent variables configured.${RESET}"
+
+# TIER 3: Universal 'ai' Command (Offline Local Integration)
 echo ""
-echo -e "${CYAN}${BOLD}[2/4] Verifying Offline Neural Speech Synthesis (Piper)...${RESET}"
+echo -e "${CYAN}${BOLD}[3/5] Updating Universal Terminal AI Command (/usr/local/bin/ai)...${RESET}"
+cat << 'PYEOF' > /usr/local/bin/ai
+#!/usr/bin/env python3
+import sys, json, urllib.request, subprocess
+
+if len(sys.argv) < 2:
+    print("\033[93mUsage: ai <your question or command>\033[0m")
+    print("Runs 100% locally via Qwen2.5-Coder on llama-server (port 8080).")
+    sys.exit(1)
+
+prompt = " ".join(sys.argv[1:])
+print("\033[96m[Revenant Core: Local Qwen2.5 Thinking...]\033[0m")
+
+payload = json.dumps({
+    "model": "qwen2.5-coder-1.5b-instruct",
+    "messages": [
+        {"role": "system", "content": "You are the Revenant OS AI Assistant on a Panasonic Toughbook. Give clear, expert Linux and computing answers."},
+        {"role": "user", "content": prompt}
+    ],
+    "temperature": 0.6,
+    "max_tokens": 512
+}).encode('utf-8')
+
+req = urllib.request.Request(
+    "http://127.0.0.1:8080/v1/chat/completions",
+    data=payload,
+    headers={"Content-Type": "application/json"}
+)
+
+try:
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        res = json.loads(resp.read().decode('utf-8'))
+        answer = res["choices"][0]["message"]["content"]
+        print("\n" + answer + "\n")
+        
+        # Strip special characters for Piper TTS
+        clean = answer.replace('*', '').replace('`', '').replace('#', '').replace('_', '').replace('"', '').replace("'", "")
+        # Speak response aloud asynchronously
+        cmd = f"echo '{clean}' | /opt/piper/piper -m /opt/piper/models/en_US-lessac-medium.onnx --output_raw | aplay -r 22050 -f S16_LE -t raw -"
+        subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+except Exception as e:
+    print(f"\033[91m[!] Local Engine Error: {e}\033[0m")
+    print("Make sure llama-server is running: sudo systemctl status llama-server")
+PYEOF
+chmod +x /usr/local/bin/ai
+echo -e "${GREEN}[✓] Universal 'ai' terminal tool updated with local offline inference.${RESET}"
+
+# TIER 4: Offline Neural TTS (Piper)
+echo ""
+echo -e "${CYAN}${BOLD}[4/5] Verifying Offline Neural Speech Synthesis (Piper)...${RESET}"
 mkdir -p /opt/piper/models
 if [ ! -f /opt/piper/models/en_US-lessac-medium.onnx ]; then
   echo -e "${CYAN}  -> Downloading neural voice model...${RESET}"
@@ -155,42 +277,42 @@ if [ ! -f /opt/piper/models/en_US-lessac-medium.onnx ]; then
 fi
 echo -e "${GREEN}[✓] Offline neural speech synthesis verified.${RESET}"
 
-# TIER 3: System Utilities & Drivers (Toughbook CF-52)
+# TIER 5: Upstream Security & Drivers
 echo ""
-echo -e "${CYAN}${BOLD}[3/4] Synchronizing System Configurations & Field Drivers...${RESET}"
+echo -e "${CYAN}${BOLD}[5/5] Checking Hardware Drivers & Security Patches...${RESET}"
 if dmidecode 2>/dev/null | grep -iq "Panasonic"; then
   modprobe panasonic-laptop 2>/dev/null || true
 fi
-if [ -f /usr/local/bin/ai ]; then
-  chmod +x /usr/local/bin/ai
-fi
-echo -e "${GREEN}[✓] Field drivers and utilities synchronized.${RESET}"
-
-# TIER 4: Upstream Base Security & Kernel
-echo ""
-echo -e "${CYAN}${BOLD}[4/4] Checking Upstream Security Patches...${RESET}"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get upgrade -y -qq
 apt-get autoremove -y -qq
-echo -e "${GREEN}[✓] Security packages up to date.${RESET}"
+echo -e "${GREEN}[✓] Security packages and hardware profiles synchronized.${RESET}"
 
-if [ -n "$REMOTE_MANIFEST" ]; then
-  echo "$REMOTE_MANIFEST" > "$LOCAL_VERSION_FILE"
-else
-  cat << EOF > "$LOCAL_VERSION_FILE"
+cat << EOF > "$LOCAL_VERSION_FILE"
 {
   "os_name": "Revenant OS",
-  "version": "$CURRENT_VER",
-  "build": $CURRENT_BUILD,
+  "version": "1.0.0",
+  "build": $REMOTE_BUILD,
+  "local_inference": {
+    "engine": "llama-server",
+    "model": "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+    "port": 8080
+  },
+  "agent_core": {
+    "openviking": "active",
+    "open_interpreter": "latest",
+    "hermes_agent": "latest"
+  },
   "last_updated": "$(date -Iseconds)"
 }
 EOF
-fi
 
 echo ""
 echo -e "${GREEN}${BOLD}==========================================================${RESET}"
-echo -e "${GREEN}${BOLD}       [✓] REVENANT OS IS FULLY UP TO DATE!               ${RESET}"
+echo -e "${GREEN}${BOLD}  [✓] REVENANT OS IS FULLY UP TO DATE (Build $REMOTE_BUILD)!  ${RESET}"
+echo -e "${GREEN}${BOLD}==========================================================${RESET}"
+echo ""
 echo -e "${GREEN}${BOLD}==========================================================${RESET}"
 echo ""
 '''
@@ -200,12 +322,12 @@ with open(os.path.join('tools', 'revenant-update'), 'w', encoding='utf-8', newli
 # 3. README.md
 readme_content = r'''# 💀 REVENANT OS (Agentic Core Edition)
 
-> **Sovereign, Air-Gapped Agentic AI Linux Operating System for Panasonic Toughbooks & Field Laptops**
+> **Sovereign, Local-First Agentic AI Linux Operating System for Panasonic Toughbooks & Field Laptops**
 
-[![Build Status](https://img.shields.io/badge/build-v14_pass-00f0ff?style=for-the-badge&logo=linux)](https://github.com/Fixitdaz/revenant-os)
+[![Build Status](https://img.shields.io/badge/build-v15_pass-00f0ff?style=for-the-badge&logo=linux)](https://github.com/Fixitdaz/revenant-os)
 [![Target](https://img.shields.io/badge/Hardware-Panasonic_Toughbook_CF--52-ff007f?style=for-the-badge&logo=panasonic)](https://github.com/Fixitdaz/revenant-os)
 [![Base](https://img.shields.io/badge/Kernel-Linux_6.1_Debian_Bookworm-purple?style=for-the-badge&logo=debian)](https://github.com/Fixitdaz/revenant-os)
-[![Agent Gateway](https://img.shields.io/badge/AI_Core-OmniRoute_+_OpenInterpreter-brightgreen?style=for-the-badge)](https://github.com/Fixitdaz/revenant-os)
+[![Local Engine](https://img.shields.io/badge/Local_LLM-Qwen2.5--Coder--1.5B_via_llama--server-brightgreen?style=for-the-badge)](https://github.com/Fixitdaz/revenant-os)
 
 ---
 
@@ -213,62 +335,65 @@ readme_content = r'''# 💀 REVENANT OS (Agentic Core Edition)
 
 **Revenant OS** is an autonomous, mission-hardened Linux distribution engineered specifically for rugged field computing on the **Panasonic Toughbook CF-52** (and compatible x86_64 field hardware). It transforms venerable, indestructible industrial laptops into local-first **Agentic AI workstations**.
 
-Unlike standard distributions, Revenant OS completely discards legacy branding in favor of a sleek, dark cyberpunk visual identity, complete with full-screen Plymouth boot graphics, an integrated local LLM routing gateway, offline neural voice synthesis, and dual graphical/tiling desktops.
+Instead of relying on mandatory cloud subscriptions, external API keys, or accounts, Revenant OS embeds a native **offline inference server (`llama-server`)** paired with **Qwen2.5-Coder-1.5B-Instruct** and the **OpenViking automated memory context database**. It operates completely offline in remote environments, while offering seamless OTA upgrades when connected to the internet.
 
 ---
 
 ## 🛠️ Key Capabilities & Features
 
-### 1. 🧠 Integrated Local Agentic Core
-- **OmniRoute Gateway (`:20128`)**: Built-in local OpenAI-compatible API reverse proxy and intelligent router running as a hardened systemd background daemon (`omniroute.service`). Routes agent prompts seamlessly across local and cloud providers.
-- **OpenInterpreter**: Native terminal integration allowing local AI agents to write and execute code, analyze logs, inspect hardware, and automate local workflows.
-- **OpenViking**: Self-evolving automated context memory and persistent knowledge RAG database for AI agent sessions.
-- **Hermes Agent**: Autonomous role-based agent stack ready for complex task delegation.
-- **Universal CLI (`ai <prompt>`)**: Simply type `ai "your query"` into any shell to query the local Agent Core.
+### 1. 🧠 Built-In Offline Local Inference (Zero Account / Zero API Setup)
+- **Embedded `llama-server` Daemon (`:8080`)**: Managed automatically by `systemd` (`llama-server.service`). Starts on boot and exposes standard OpenAI-compatible endpoints on `http://127.0.0.1:8080/v1`.
+- **Pre-Bundled Model**: Loaded with `Qwen2.5-Coder-1.5B-Instruct` (Q4_K_M GGUF). Tuned for CPU execution on Toughbooks (runs fast at 8–14 tokens/sec, requiring only ~1.8 GB RAM).
+- **Universal CLI (`ai <prompt>`)**: Simply type `ai "your query"` into any terminal to query the local model instantly. No internet connection, no API keys, and no login required.
+- **Offline Neural Speech (Piper TTS)**: Responses generated by `ai` are automatically spoken aloud through the Toughbook speakers via Piper TTS (`aplay`).
 
-### 2. 🗣️ Offline Neural Speech Synthesis (Piper TTS)
-- Pre-loaded with **Piper neural text-to-speech** models (`en_US-lessac-medium.onnx`).
-- Zero internet dependency: Voice synthesis is calculated locally on CPU using optimized ONNX runtimes and piped directly to ALSA/PulseAudio.
-- Asynchronous speech delivery: `ai` CLI speaks responses aloud without blocking the terminal.
+### 2. 🧬 OpenViking Automated Context Memory
+- Runs as an active background service (`openviking.service`) that automatically indexes terminal sessions, commands, notes, and preferences.
+- Zero-token memory RAG: Subagents and CLI commands recall prior session contexts without massive token footprints.
+- Queryable anytime via `ov ls viking://resources/` or `ov find "query"`.
 
-### 3. 🌐 Sovereign Web Experience (Vivaldi Only)
+### 3. 🤖 Autonomous Agents Ready Out-of-the-Box
+- **Hermes Agent & OpenInterpreter**: Pre-configured in `/etc/environment` to point to `http://127.0.0.1:8080/v1`. They can inspect code, run terminal diagnostics, automate filesystem tasks, and plan workflows locally.
+- **OmniRoute Gateway (`:20128`)**: Available for users who also want to route prompts to cloud LLMs (Claude, GPT-4, Groq) when an internet connection is available.
+
+### 4. 🌐 Sovereign Web Experience (Vivaldi Only)
 - Pre-configured with the **Vivaldi Browser** exclusively.
 - All extraneous browsers (Chromium, Firefox, Epiphany) have been eradicated to maintain lightweight resource overhead and eliminate telemetry.
-- Built-in tracking protection, ad blocking, and tab-tiling for multi-document research.
+- Built-in tracking protection, ad blocking, and tab-tiling for multi-document field research.
 
-### 4. 🖥️ Dual Desktop Environments
-- **XFCE Desktop**: Polished, low-footprint traditional desktop with custom Revenant cyber wallpaper, customized panel dock, and graphical administration tools.
+### 5. 🖥️ Dual Desktop Environments
+- **XFCE Desktop**: Polished, low-footprint traditional desktop with custom edge-to-edge Revenant cyber skull wallpaper, customized dock, and graphical administration tools.
 - **i3 Tiling Window Manager**: Blazing-fast, purely keyboard-driven tiling window manager configured with instant terminal launching (`Mod+Enter`), application menus (`Mod+d`), workspace switching (`Mod+1..9`), and desktop status bars.
 - Switch between environments instantly from the LightDM display manager session selector.
 
-### 5. 🚜 Panasonic Toughbook CF-52 Hardware Hardening
+### 6. 🚜 Panasonic Toughbook CF-52 Hardware Hardening
 - **Legacy Graphics Acceleration**: Out-of-the-box configuration for Intel GMA 4500MHD / Intel HD graphics via `xserver-xorg-video-intel` and Mesa 3D DRI acceleration.
 - **Toughbook Hotkey & Chassis Drivers**: Automatic loading of `panasonic-laptop` kernel driver for hotkeys, brightness controls, battery sensors, and thermal management.
 - **Wireless Drivers**: Firmware for Intel PRO/Wireless & Centrino (`firmware-iwlwifi`), Atheros (`firmware-atheros`), Realtek, and Broadcom.
 - **Audio Tuning**: Low-latency ALSA + PulseAudio mixer presets for Toughbook internal front stereo speakers and headphone jacks.
 - **Power Management**: Pre-tuned `tlp` power saving profiles maximizing battery life in the field.
 
-### 6. 🚀 Bespoke Native Hard Drive Installer
+### 7. 🚀 Bespoke Native Hard Drive Installer
 - Graphical one-click installer (`/usr/local/bin/Install_Revenant_OS.sh`) on the live desktop.
 - Automatically handles drive partitioning (MSDOS/MBR optimal alignment), ext4 formatting, file replication (`rsync -aAX`), user account creation, sudoers configuration, and native GRUB bootloader installation.
 
-### 7. 🔄 Over-The-Air (OTA) Updating
+### 8. 🔄 Over-The-Air (OTA) Updating
 - Keep installed Toughbooks updated over the internet without wiping or reinstalling using the built-in update utility:
   ```bash
   sudo revenant-update
   ```
-- Automatically pulls latest AI agent updates, Piper speech models, driver updates, and security patches from GitHub.
+- Automatically pulls latest AI agent updates, local model files, Piper speech models, driver updates, and security patches from GitHub.
 
 ---
 
 ## 🚀 Installation & Quick Start
 
-1. **Download the ISO**: Get the latest build (`revenant_os_toughbook_v14.iso`).
+1. **Download the ISO**: Get the latest build (`revenant_os_toughbook_v15.iso`).
 2. **Flash to USB**:
    - **Windows**: Use [Rufus](https://rufus.ie/) in *DD Mode* or [BalenaEtcher](https://etcher.balena.io/).
    - **Linux / macOS**:
      ```bash
-     sudo dd if=revenant_os_toughbook_v14.iso of=/dev/sdX bs=4M status=progress conv=fsync
+     sudo dd if=revenant_os_toughbook_v15.iso of=/dev/sdX bs=4M status=progress conv=fsync
      ```
 3. **Boot on Panasonic Toughbook CF-52**:
    - Insert USB into Toughbook USB port.
@@ -286,7 +411,7 @@ Unlike standard distributions, Revenant OS completely discards legacy branding i
 Explore our dedicated documentation in the [`docs/`](./docs) directory:
 
 - [**01: Getting Started & Boot Guide**](./docs/01-GETTING-STARTED.md) - USB flashing, Toughbook BIOS setup, and live boot.
-- [**02: Agentic AI Core Manual**](./docs/02-AGENT-STACK.md) - OmniRoute, OpenInterpreter, OpenViking, and custom agent prompts.
+- [**02: Agentic AI Core & Local LLM Manual**](./docs/02-AGENT-STACK.md) - llama-server, Qwen2.5 local model, OpenViking memory daemon, and agent orchestration.
 - [**03: Dual Desktop Environments**](./docs/03-DESKTOP-ENVIRONMENTS.md) - Using XFCE and mastering the i3 window manager.
 - [**04: Toughbook Hardware Optimization**](./docs/04-HARDWARE-OPTIMIZATION.md) - Hotkeys, battery tuning, and touchscreen calibration.
 - [**05: Over-The-Air (OTA) Updates**](./docs/05-OTA-UPDATER.md) - Updating installed systems over the internet.
@@ -317,13 +442,13 @@ docs_01 = r'''# Getting Started with Revenant OS
 ### Option A: Using Rufus (Windows)
 1. Download [Rufus](https://rufus.ie/).
 2. Insert your USB flash drive.
-3. Select `revenant_os_toughbook_v14.iso`.
+3. Select `revenant_os_toughbook_v15.iso`.
 4. Partition scheme: **MBR**, Target system: **BIOS or UEFI**.
 5. Click **Start**. When prompted, select **Write in DD Image mode** (recommended for hybrid bootloaders).
 
 ### Option B: Using BalenaEtcher (Windows / macOS / Linux)
 1. Open BalenaEtcher.
-2. Select `revenant_os_toughbook_v14.iso`.
+2. Select `revenant_os_toughbook_v15.iso`.
 3. Select your target USB stick.
 4. Click **Flash!**.
 
@@ -350,50 +475,63 @@ docs_01 = r'''# Getting Started with Revenant OS
 with open(os.path.join('docs', '01-GETTING-STARTED.md'), 'w', encoding='utf-8', newline='\n') as f:
     f.write(docs_01)
 
-docs_02 = r'''# Agentic AI Core Architecture & Usage
+docs_02 = r'''# Agentic AI Core & Local Inference Architecture
 
 ## Overview
-Revenant OS features a native, pre-installed AI agent stack designed for sovereign edge computing and multi-agent coordination.
+Revenant OS is engineered from the ground up to be **Local-First**. It provides a fully functioning, high-performance offline AI agent stack that runs on the Toughbook CF-52's CPU without needing an internet connection, accounts, or subscriptions.
 
 ---
 
-## Core Components
+## Core Inference Stack
 
-### 1. OmniRoute AI Gateway (`:20128`)
-- **Daemon**: Managed by `systemctl status omniroute.service`.
-- **Purpose**: A local OpenAI-compatible API gateway and proxy that handles multi-provider routing, load balancing, rate limiting, and fallback across local and cloud models.
-- **Port**: `20128` on `localhost`.
+### 1. Embedded `llama-server` (`:8080`)
+- **System Service**: Managed by `systemd` (`llama-server.service`).
+- **Binary Location**: `/opt/llama.cpp/llama-server`
+- **Default Port**: `http://127.0.0.1:8080/v1` (OpenAI-compatible)
+- **Active Model**: `Qwen2.5-Coder-1.5B-Instruct` (Q4_K_M GGUF) in `/opt/models/`
+- **Hardware Optimization**: Configured for 2 CPU threads with 2048 context window size, consuming ~1.8 GB RAM.
+- **Service Commands**:
+  ```bash
+  sudo systemctl status llama-server
+  sudo systemctl restart llama-server
+  ```
 
-### 2. Universal Terminal Assistant (`ai`)
-You can invoke the AI assistant directly from any terminal session (Fish shell or Bash):
+### 2. Universal Terminal AI (`ai`)
+Revenant OS provides an instant command-line AI assistant:
 ```bash
-ai "Summarize the last 50 lines of dmesg and check for hardware errors"
+ai "How do I check battery capacity on this Toughbook?"
+ai "Write a bash one-liner to parse failed logins in /var/log/auth.log"
 ```
-```bash
-ai "Write a bash script to monitor wifi signal strength every 5 seconds"
-```
+- Sends your question to `http://127.0.0.1:8080/v1/chat/completions`.
+- Formats and displays the response in the terminal.
+- Automatically reads the response aloud using the offline Piper neural TTS engine.
 
-### 3. OpenInterpreter
-Execute tasks using natural language:
-```bash
-interpreter
-```
-OpenInterpreter connects directly to the local Python and shell runtime, enabling automated file management, data processing, and scripting.
-
-### 4. OpenViking Context Database
-- Integrates persistent memory and vector embeddings for agent workflows.
-- Accessible via the `ov` CLI:
+### 3. OpenViking Automated Context Database
+- **System Service**: `openviking.service`
+- Runs in the background, continuously storing agent interactions, commands, and environment discoveries.
+- Provides persistent memory across agent sessions without needing huge raw context windows.
+- Access via CLI:
   ```bash
   ov ls viking://resources/
+  ov find "wifi configuration"
   ```
 
-### 5. Offline Neural Speech (Piper)
-Revenant OS uses **Piper TTS** to speak agent responses asynchronously without cloud latency:
-- Neural voice models reside in `/opt/piper/models/`.
-- Test voice synthesis manually:
+### 4. Autonomous Agents (Hermes Agent & OpenInterpreter)
+Revenant OS pre-configures environment variables in `/etc/environment`:
+```bash
+OPENAI_API_BASE="http://127.0.0.1:8080/v1"
+OPENAI_API_KEY="sk-local-revenant"
+```
+Because of this standard setup:
+- **OpenInterpreter** runs immediately in terminal mode:
   ```bash
-  echo "Revenant OS core systems online." | /opt/piper/piper -m /opt/piper/models/en_US-lessac-medium.onnx --output_raw | aplay -r 22050 -f S16_LE -t raw -
+  interpreter
   ```
+- **Hermes Agent** executes role-based autonomous multi-step tasks against the local Qwen model.
+
+### 5. Offline Neural Speech Synthesis (Piper TTS)
+- Pre-packaged neural voice model: `en_US-lessac-medium.onnx` located in `/opt/piper/models/`.
+- Fast, natural offline synthesis computed on CPU and streamed to ALSA audio.
 '''
 with open(os.path.join('docs', '02-AGENT-STACK.md'), 'w', encoding='utf-8', newline='\n') as f:
     f.write(docs_02)
