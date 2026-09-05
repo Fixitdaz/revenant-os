@@ -37,7 +37,7 @@ Every time `revenant-update` is executed with an active internet connection, it 
 
 ### Tier 1: Local Inference Engine (`llama-server`)
 - Downloads the static `llama-server` binary and `Qwen2.5-Coder-1.5B-Instruct` GGUF model if missing.
-- Configures `llama-server.service` with a **20,480 token context window** and **unquantized `f16` Key-Value attention cache** (preventing 4-bit attention distortion and infinite text repetition).
+- Configures `llama-server.service` with a **4,096 token context window** and **unquantized `f16` Key-Value attention cache** (proven Build 15.3 golden config, preventing memory pressure and infinite text repetition).
 - Restarts and enables the service on `http://127.0.0.1:8080/v1`.
 
 ### Tier 2: Agent Stack & Context Memory
@@ -45,7 +45,7 @@ Every time `revenant-update` is executed with an active internet connection, it 
 - Configures `openviking.service` context memory daemon.
 - Generates hardened Hermes Agent configuration (`~/.hermes/config.yaml`) with:
   - Custom provider name: `name: "local"`
-  - 20,480 token context length
+  - 4,096 token context length
   - Auxiliary context compression model
 - Sets system-wide environment variables in `/etc/environment` (`OPENAI_API_BASE` and `OPENAI_API_KEY`).
 

@@ -183,7 +183,7 @@ After=network.target
 [Service]
 Type=simple
 Environment=LD_LIBRARY_PATH=/opt/llama.cpp
-ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --host 127.0.0.1 --port 8080 --ctx-size 20480 -np 1 --threads 2 --n-gpu-layers 0
+ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --host 127.0.0.1 --port 8080 --ctx-size 4096 --threads 2 --n-gpu-layers 0
 Restart=always
 RestartSec=3
 User=root
@@ -196,7 +196,7 @@ pkill -9 -f llama-server 2>/dev/null || true
 systemctl daemon-reload
 systemctl enable llama-server.service 2>/dev/null || true
 systemctl restart llama-server.service 2>/dev/null || true
-echo -e "${GREEN}[✓] Local inference server configured on http://127.0.0.1:8080/v1 (20K context, standard f16 KV cache)${RESET}"
+echo -e "${GREEN}[✓] Local inference server configured on http://127.0.0.1:8080/v1 (4K context, standard f16 KV cache - Build 15.3 golden config)${RESET}"
 
 # TIER 2: OpenViking Memory Daemon & Agent Core
 echo ""
@@ -238,10 +238,11 @@ echo 'OPENAI_API_KEY="sk-local-revenant"' >> /etc/environment
 
 # Patch Hermes Agent hardcoded minimum context floor if present
 if [ -f /usr/lib/node_modules/hermes-agent/runtime/hermes-agent/agent/model_metadata.py ]; then
-  sed -i 's/MINIMUM_CONTEXT_LENGTH = 64_000/MINIMUM_CONTEXT_LENGTH = 8_000/g' /usr/lib/node_modules/hermes-agent/runtime/hermes-agent/agent/model_metadata.py
+  sed -i 's/MINIMUM_CONTEXT_LENGTH = 64_000/MINIMUM_CONTEXT_LENGTH = 4_000/g' /usr/lib/node_modules/hermes-agent/runtime/hermes-agent/agent/model_metadata.py
+  sed -i 's/MINIMUM_CONTEXT_LENGTH = 8_000/MINIMUM_CONTEXT_LENGTH = 4_000/g' /usr/lib/node_modules/hermes-agent/runtime/hermes-agent/agent/model_metadata.py
 fi
 
-# Update Hermes config templates with 20k context_length and auxiliary compression overrides
+# Update Hermes config templates with 4k context_length and auxiliary compression overrides
 for u_home in /root /etc/skel /home/*; do
   if [ -d "$u_home" ]; then
     mkdir -p "$u_home/.hermes"
@@ -250,17 +251,17 @@ model:
   default: "qwen2.5-coder-1.5b-instruct"
   provider: "custom"
   base_url: "http://127.0.0.1:8080/v1"
-  context_length: 20480
+  context_length: 4096
 custom_providers:
   - name: "local"
     base_url: "http://127.0.0.1:8080/v1"
     models:
       qwen2.5-coder-1.5b-instruct:
-        context_length: 20480
+        context_length: 4096
 auxiliary:
   compression:
     model: "qwen2.5-coder-1.5b-instruct"
-    context_length: 20480
+    context_length: 4096
 toolsets:
   - "hermes-cli"
 HERMES_UPDATE_CFG
@@ -273,7 +274,7 @@ HERMES_UPDATE_ENV
   fi
 done
 
-echo -e "${GREEN}[✓] OpenViking memory daemon and Hermes 20K configuration synchronized.${RESET}"
+echo -e "${GREEN}[✓] OpenViking memory daemon and Hermes 4K configuration synchronized.${RESET}"
 
 # TIER 3: Universal 'ai' Command (Offline Local Integration)
 echo ""
@@ -297,6 +298,8 @@ payload = json.dumps({
         {"role": "user", "content": prompt}
     ],
     "temperature": 0.6,
+    "presence_penalty": 0.1,
+    "frequency_penalty": 0.1,
     "max_tokens": 512
 }).encode('utf-8')
 

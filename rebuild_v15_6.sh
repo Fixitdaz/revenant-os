@@ -111,7 +111,7 @@ After=network.target
 [Service]
 Type=simple
 Environment=LD_LIBRARY_PATH=/opt/llama.cpp
-ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --host 127.0.0.1 --port 8080 --ctx-size 20480 -np 1 --threads 2 --n-gpu-layers 0
+ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --host 127.0.0.1 --port 8080 --ctx-size 4096 --threads 2 --n-gpu-layers 0
 Restart=always
 RestartSec=3
 User=root
@@ -170,11 +170,11 @@ custom_providers:
     base_url: "http://127.0.0.1:8080/v1"
     models:
       qwen2.5-coder-1.5b-instruct:
-        context_length: 20480
+        context_length: 4096
 auxiliary:
   compression:
     model: "qwen2.5-coder-1.5b-instruct"
-    context_length: 20480
+    context_length: 4096
 toolsets:
   - "hermes-cli"
 HERMES_CFG
@@ -221,6 +221,8 @@ payload = json.dumps({
         {"role": "user", "content": prompt}
     ],
     "temperature": 0.6,
+    "presence_penalty": 0.1,
+    "frequency_penalty": 0.1,
     "max_tokens": 512
 }).encode('utf-8')
 

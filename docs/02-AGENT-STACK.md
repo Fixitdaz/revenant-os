@@ -13,8 +13,8 @@ Revenant OS is engineered from the ground up to be **Local-First**. It provides 
 - **Default Port**: `http://127.0.0.1:8080/v1` (OpenAI-compatible)
 - **Active Model**: `Qwen2.5-Coder-1.5B-Instruct` (Q4_K_M GGUF) in `/opt/models/`
 - **Attention & KV Cache Architecture**:
-  - Configured with a **20,480 token context window** (`--ctx-size 20480`).
-  - Uses full-fidelity `f16` Key-Value attention cache. This completely avoids 4-bit KV quantization errors (`q4_0`), ensuring coherent reasoning, syntax accuracy, and zero repetitive stutter loops.
+  - Configured with a **4,096 token context window** (`--ctx-size 4096`).
+  - Uses full-fidelity `f16` Key-Value attention cache (Build 15.3 golden configuration). This completely avoids 4-bit KV quantization errors (`q4_0`), ensuring coherent reasoning, syntax accuracy, and zero repetitive stutter loops.
   - Resource usage: ~1.6 GB total RAM on CPU (fits comfortably inside 4 GB RAM).
 - **Service Management**:
   ```bash
