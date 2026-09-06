@@ -90,7 +90,16 @@ revenant-services
 Or double-click the **"Start AI Engine & Services"** icon on your desktop.
 
 ### 6. Full-Duplex Offline Voice System (Whisper STT + Piper TTS)
-Revenant OS Build 18 introduces a completely offline, two-way conversational voice loop:
-- **Speech-to-Text (STT)**: Powered by `whisper.cpp` using the quantized `ggml-tiny.en.bin` model (~75MB) in `/opt/whisper/models/`. Microphone audio is captured via ALSA `arecord` (16kHz 16-bit mono) and transcribed on CPU in under 1.5 seconds.
+Revenant OS Build 18 introduces a completely offline, two-way conversational voice loop with single-window terminal integration:
+- **Speech-to-Text (STT)**: Powered by `whisper.cpp` using the quantized `ggml-tiny.en.bin` model (~75MB) in `/opt/whisper/models/`. Audio is captured via ALSA `arecord` (16kHz 16-bit mono) and transcribed on CPU in under 1.5 seconds.
 - **Text-to-Speech (TTS)**: Powered by Piper with `en_US-lessac-medium.onnx` in `/opt/piper/models/`. Generates natural voice output streamed to ALSA `aplay`.
-- **Hands-Free Field Workflow**: Use `/mic` inside `revenant-agent` or run `ai --mic` to ask questions aloud in the field and hear the answer spoken back.
+- **Single-Window Coordinator (`<Super>+M` / `revenant-voice`)**:
+  - Pressing `<Super>+M` (Windows Key + M) or clicking the desktop voice shortcut coordinates with the running agent process via IPC (`SIGUSR1`).
+  - **No Multi-Window Clutter**: If the Revenant Field Agent is already open, pressing `<Super>+M` focuses the existing window and toggles speech listening directly inside it, never spawning extra terminal windows.
+  - If the agent is not running, it launches exactly ONE terminal instance with microphone mode active.
+- **Interactive Prompt Pre-Filling**:
+  - Transcribed speech is typed directly into the active prompt buffer using GNU Readline:
+    `revenant ❯ <transcribed text>`
+  - The cursor is placed at the end of the line, allowing the user to review the transcription, make manual edits or additions, and hit **Enter** to submit.
+- **Panasonic Toughbook CF-52 ALSA Auto-Configuration**:
+  - Built-in microphone channels (`Capture`, `Internal Mic`, `Mic Boost`, `Capture Boost`) are automatically unmuted, set to 95%, and enabled with `cap` both on system boot (`/etc/xdg/autostart/revenant-audio.desktop`) and prior to every voice recording.

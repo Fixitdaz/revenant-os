@@ -58,6 +58,9 @@ chroot "$PATCH_ROOT" apt-get install -y --no-install-recommends \
   brightnessctl \
   xinput-calibrator \
   libasound2 \
+  alsa-utils \
+  wmctrl \
+  xdotool \
   libnss3 \
   libatk1.0-0 \
   libatk-bridge2.0-0 \
@@ -195,10 +198,45 @@ fi
 if [ -f "$SCRIPT_DIR/revenant_logo.png" ]; then
   cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/usr/share/icons/revenant-logo.png"
   cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/usr/share/icons/revenant-avatar.png"
+
+  # Completely overwrite Debian default avatars and all user account avatars with Revenant 'R' badge
+  for av_dest in "$PATCH_ROOT/usr/share/images/desktop-base/avatar.png" "$PATCH_ROOT/usr/share/icons/desktop-base/avatar.png" \
+                 "$PATCH_ROOT/usr/share/images/desktop-base/avatar.svg" "$PATCH_ROOT/usr/share/icons/desktop-base/avatar.svg"; do
+    cp -f "$SCRIPT_DIR/revenant_logo.png" "$av_dest" 2>/dev/null || true
+  done
+
+  # Overwrite default skel and root avatars
+  cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/etc/skel/.face" 2>/dev/null || true
+  cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/etc/skel/.face.icon" 2>/dev/null || true
+  cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/root/.face" 2>/dev/null || true
+  cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/root/.face.icon" 2>/dev/null || true
+
+  # Overwrite all existing user avatars in /home/*
+  for uhome in "$PATCH_ROOT/home"/*; do
+    if [ -d "$uhome" ]; then
+      cp -f "$SCRIPT_DIR/revenant_logo.png" "$uhome/.face" 2>/dev/null || true
+      cp -f "$SCRIPT_DIR/revenant_logo.png" "$uhome/.face.icon" 2>/dev/null || true
+    fi
+  done
+
+  # Overwrite AccountsService avatar cache
+  if [ -d "$PATCH_ROOT/var/lib/AccountsService/icons" ]; then
+    for icon_file in "$PATCH_ROOT/var/lib/AccountsService/icons"/*; do
+      if [ -f "$icon_file" ]; then
+        cp -f "$SCRIPT_DIR/revenant_logo.png" "$icon_file" 2>/dev/null || true
+      fi
+    done
+  fi
 fi
 
 # Neutralize vendor Debian logo icons with the Revenant badge
-for deb_icon in "$PATCH_ROOT/usr/share/icons/desktop-base/debian.svg" "$PATCH_ROOT/usr/share/icons/desktop-base/debian-logo.svg" "$PATCH_ROOT/usr/share/icons/hicolor/scalable/apps/debian-logo.svg"; do
+for deb_icon in "$PATCH_ROOT/usr/share/icons/desktop-base/debian.svg" \
+               "$PATCH_ROOT/usr/share/icons/desktop-base/debian-logo.svg" \
+               "$PATCH_ROOT/usr/share/icons/desktop-base/"*debian*.svg \
+               "$PATCH_ROOT/usr/share/icons/desktop-base/"*debian*.png \
+               "$PATCH_ROOT/usr/share/icons/hicolor/scalable/apps/debian-logo.svg" \
+               "$PATCH_ROOT/usr/share/icons/hicolor/"*/apps/debian*.png \
+               "$PATCH_ROOT/usr/share/icons/hicolor/"*/apps/debian*.svg; do
   if [ -f "$deb_icon" ] && [ -f "$SCRIPT_DIR/revenant_logo.png" ]; then
     cp -f "$SCRIPT_DIR/revenant_logo.png" "$deb_icon" 2>/dev/null || true
   fi
@@ -248,11 +286,11 @@ cat << 'AGENT_EOF' > "$PATCH_ROOT/usr/local/bin/revenant-agent"
 # ==============================================================================
 # Revenant OS - Native Autonomous Agent Core (CPU-Optimized for Panasonic Toughbook)
 # ==============================================================================
-import sys, os, json, re, urllib.request, subprocess, glob, time
+import sys, os, json, re, urllib.request, subprocess, glob, time, signal, atexit
 try:
     import readline
 except ImportError:
-    pass
+    readline = None
 
 CYAN = "\033[96m"
 GREEN = "\033[92m"
@@ -270,7 +308,58 @@ You can inspect the system and run actions using these commands:
 - [WRITE: filepath | content] to create or update files
 Keep explanations brief. Provide the command needed to solve the user's task."""
 
+PID_FILE = "/tmp/revenant_agent.pid"
 VOICE_ENABLED = False
+mic_requested = False
+
+def cleanup_pid():
+    try:
+        if os.path.exists(PID_FILE):
+            with open(PID_FILE, 'r') as f:
+                if f.read().strip() == str(os.getpid()):
+                    os.remove(PID_FILE)
+    except Exception:
+        pass
+
+atexit.register(cleanup_pid)
+try:
+    with open(PID_FILE, 'w') as f:
+        f.write(str(os.getpid()))
+except Exception:
+    pass
+
+class VoiceTrigger(Exception):
+    pass
+
+def handle_voice_signal(signum, frame):
+    global mic_requested
+    mic_requested = True
+    raise VoiceTrigger()
+
+try:
+    signal.signal(signal.SIGUSR1, handle_voice_signal)
+    signal.siginterrupt(signal.SIGUSR1, True)
+except Exception:
+    pass
+
+def set_input_buffer(text):
+    """Prefill the interactive readline prompt so user can review/edit and hit Enter."""
+    if not text or not readline:
+        return
+    def pre_hook():
+        try:
+            readline.insert_text(text)
+            readline.redisplay()
+        except Exception:
+            pass
+        try:
+            readline.set_pre_input_hook(None)
+        except Exception:
+            pass
+    try:
+        readline.set_pre_input_hook(pre_hook)
+    except Exception:
+        pass
 
 def speak_text(text):
     if not VOICE_ENABLED:
@@ -281,15 +370,49 @@ def speak_text(text):
         cmd = f"echo '{clean}' | /opt/piper/piper -m /opt/piper/models/en_US-lessac-medium.onnx --output_raw 2>/dev/null | aplay -r 22050 -f S16_LE -t raw - 2>/dev/null"
         subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+def configure_microphone():
+    """Unmute and boost Panasonic Toughbook CF-52 microphone capture channels."""
+    controls = [
+        "amixer -q set Capture 95% unmute",
+        "amixer -q set 'Capture',0 95% unmute",
+        "amixer -q set 'Internal Mic' 95% unmute",
+        "amixer -q set 'Mic' 95% unmute",
+        "amixer -q set 'Front Mic' 95% unmute",
+        "amixer -q set 'Mic Boost' 2 unmute",
+        "amixer -q set 'Capture Boost' 2 unmute",
+        "amixer -q set 'Input Source' 'Internal Mic' || amixer -q set 'Input Source' 'Mic'",
+        "amixer -q sset 'Capture' cap",
+        "amixer -q sset 'Internal Mic' cap"
+    ]
+    for cmd in controls:
+        subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
 def record_voice(duration=5, output_wav="/tmp/revenant_voice.wav"):
     """Record audio from Toughbook microphone using arecord (16kHz 16-bit mono for Whisper)."""
+    configure_microphone()
     try:
         if os.path.exists(output_wav):
-            os.remove(output_wav)
+            try:
+                os.remove(output_wav)
+            except Exception:
+                pass
         print(f"\n{YELLOW}🎙️  [Listening... Speak into microphone ({duration}s)...]{RESET}")
+
+        # Primary attempt: default ALSA / Pulse / Pipewire
         cmd = f"arecord -q -d {duration} -r 16000 -c 1 -f S16_LE '{output_wav}'"
-        subprocess.run(cmd, shell=True, check=True)
-        return os.path.exists(output_wav)
+        res = subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # Fallback 1: plughw:0,0
+        if res.returncode != 0 or not os.path.exists(output_wav) or os.path.getsize(output_wav) < 1000:
+            cmd = f"arecord -q -D plughw:0,0 -d {duration} -r 16000 -c 1 -f S16_LE '{output_wav}'"
+            res = subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # Fallback 2: stereo capture with downmix
+        if res.returncode != 0 or not os.path.exists(output_wav) or os.path.getsize(output_wav) < 1000:
+            cmd = f"arecord -q -d {duration} -r 16000 -c 2 -f S16_LE /tmp/revenant_stereo.wav && (ffmpeg -y -i /tmp/revenant_stereo.wav -ac 1 '{output_wav}' 2>/dev/null || cp /tmp/revenant_stereo.wav '{output_wav}')"
+            subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        return os.path.exists(output_wav) and os.path.getsize(output_wav) > 1000
     except Exception as e:
         print(f"{RED}[!] Audio record error: {e}{RESET}")
         return False
@@ -300,7 +423,7 @@ def transcribe_voice(wav_path="/tmp/revenant_voice.wav"):
         return ""
     whisper_bin = "/opt/whisper/whisper-cli"
     model_path = "/opt/whisper/models/ggml-tiny.en.bin"
-    
+
     print(f"{CYAN}⚡ [Transcribing voice with local Whisper STT...]{RESET}")
     if os.path.exists(whisper_bin) and os.path.exists(model_path):
         try:
@@ -313,8 +436,7 @@ def transcribe_voice(wav_path="/tmp/revenant_voice.wav"):
             return clean
         except Exception as e:
             print(f"{RED}[!] Whisper error: {e}{RESET}")
-    
-    # Fallback to python pywhispercpp if installed
+
     try:
         from pywhispercpp.model import Model
         m = Model('tiny.en', models_dir='/opt/whisper/models')
@@ -326,9 +448,22 @@ def transcribe_voice(wav_path="/tmp/revenant_voice.wav"):
     print(f"{YELLOW}[!] Whisper STT not ready. Run 'sudo revenant-update' to install.{RESET}")
     return ""
 
+def handle_mic_input():
+    if record_voice(duration=5):
+        transcript = transcribe_voice()
+        if transcript:
+            print(f"{GREEN}✓ Speech recognized:{RESET} {BOLD}\"{transcript}\"{RESET}")
+            print(f"{DIM}(Review or edit prompt below, then hit Enter to execute){RESET}\n")
+            set_input_buffer(transcript)
+            return transcript
+        else:
+            print(f"{YELLOW}[No speech detected or transcription empty]{RESET}\n")
+    else:
+        print(f"{RED}[!] Could not capture audio from microphone. Check connections.{RESET}\n")
+    return ""
+
 def get_system_telemetry():
     telemetry = []
-    # Battery
     bats = glob.glob('/sys/class/power_supply/BAT*/capacity')
     if bats:
         try:
@@ -337,7 +472,6 @@ def get_system_telemetry():
             telemetry.append(f"Battery: {cap}%")
         except Exception:
             pass
-    # Temp
     temps = glob.glob('/sys/class/thermal/thermal_zone*/temp')
     if temps:
         try:
@@ -346,7 +480,6 @@ def get_system_telemetry():
             telemetry.append(f"Temp: {t:.1f}°C")
         except Exception:
             pass
-    # RAM
     try:
         out = subprocess.check_output("free -m | awk '/Mem:/ {print $3\"/\"$2\"MB\"}'", shell=True).decode().strip()
         telemetry.append(f"RAM: {out}")
@@ -443,8 +576,8 @@ def call_local_model(messages, max_tokens=384):
     print()
     return "".join(collected)
 
-def run_agent_loop(initial_prompt=None):
-    global VOICE_ENABLED
+def run_agent_loop(initial_prompt=None, initial_mic=False):
+    global VOICE_ENABLED, mic_requested
     os.system('clear')
     print(f"{CYAN}{BOLD}=========================================================={RESET}")
     print(f"{CYAN}{BOLD}        REVENANT OS - AUTONOMOUS FIELD AGENT CORE         {RESET}")
@@ -452,7 +585,8 @@ def run_agent_loop(initial_prompt=None):
     telem = get_system_telemetry()
     if telem:
         print(f"{DIM}{telem}{RESET}")
-    print(f"{DIM}Commands: /mic (voice input) | /voice (toggle speech) | /sys | /clear | exit{RESET}\n")
+    print(f"{DIM}Commands: /mic (voice input) | /voice (toggle speech) | /sys | /clear | exit{RESET}")
+    print(f"{CYAN}Hotkeys:  Press <Super>+M anytime to speak directly into this window.{RESET}\n")
 
     history = [
         {"role": "system", "content": SYSTEM_PROMPT}
@@ -460,14 +594,29 @@ def run_agent_loop(initial_prompt=None):
 
     pending_user_input = initial_prompt
 
+    if initial_mic:
+        handle_mic_input()
+
     while True:
+        if mic_requested:
+            mic_requested = False
+            handle_mic_input()
+
         if pending_user_input:
             user_input = pending_user_input
             pending_user_input = None
         else:
             try:
                 user_input = input(f"{GREEN}{BOLD}revenant ❯ {RESET}").strip()
+            except (VoiceTrigger, InterruptedError):
+                mic_requested = False
+                handle_mic_input()
+                continue
             except (KeyboardInterrupt, EOFError):
+                if mic_requested:
+                    mic_requested = False
+                    handle_mic_input()
+                    continue
                 print(f"\n{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
                 break
 
@@ -478,16 +627,8 @@ def run_agent_loop(initial_prompt=None):
             print(f"{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
             break
         elif user_input.lower() in ('/mic', '/talk', '/listen'):
-            if record_voice(duration=5):
-                transcript = transcribe_voice()
-                if transcript:
-                    print(f"{GREEN}{BOLD}You (Voice):{RESET} {transcript}\n")
-                    user_input = transcript
-                else:
-                    print(f"{YELLOW}[No speech detected or transcription empty]{RESET}\n")
-                    continue
-            else:
-                continue
+            handle_mic_input()
+            continue
         elif user_input == '/clear':
             history = [{"role": "system", "content": SYSTEM_PROMPT}]
             print(f"{GREEN}[✓] Conversation memory cleared.{RESET}\n")
@@ -505,7 +646,6 @@ def run_agent_loop(initial_prompt=None):
 
         history.append({"role": "user", "content": user_input})
 
-        # Compact history if it exceeds 10 turns to keep prompt processing instant
         if len(history) > 10:
             history = [history[0]] + history[-8:]
 
@@ -515,11 +655,9 @@ def run_agent_loop(initial_prompt=None):
             history.append({"role": "assistant", "content": response})
             speak_text(response)
 
-            # Tool extraction loop
             tool_matches = re.findall(r'\[(EXEC|READ|WRITE):\s*(.*?)\]', response, re.DOTALL)
             for action_type, payload in tool_matches:
                 result = execute_tool(action_type, payload)
-                # Feed tool result back to agent
                 history.append({"role": "user", "content": f"Tool execution result:\n{result}"})
                 print(f"\n{CYAN}[Revenant Agent Analyzing Result...]{RESET}")
                 followup = call_local_model(history, max_tokens=256)
@@ -536,17 +674,14 @@ def run_agent_loop(initial_prompt=None):
 
 if __name__ == '__main__':
     initial = None
+    start_mic = False
     if len(sys.argv) > 1:
         if sys.argv[1] in ('--mic', '-m', '--voice'):
             VOICE_ENABLED = True
-            if record_voice(duration=5):
-                t = transcribe_voice()
-                if t:
-                    print(f"\033[92m\033[1mYou (Voice):\033[0m {t}\n")
-                    initial = t
+            start_mic = True
         else:
             initial = " ".join(sys.argv[1:])
-    run_agent_loop(initial_prompt=initial)
+    run_agent_loop(initial_prompt=initial, initial_mic=start_mic)
 AGENT_EOF
 chmod +x "$PATCH_ROOT/usr/local/bin/revenant-agent"
 
@@ -725,9 +860,32 @@ chmod +x "$PATCH_ROOT/usr/local/bin/revenant-services"
 cat << 'VOICE_EOF' > "$PATCH_ROOT/usr/local/bin/revenant-voice"
 #!/bin/bash
 # ==============================================================================
-# Revenant Voice Agent Quick Launcher (Super+M / Ctrl+Alt+M)
+# Revenant Voice Assistant Single-Window Coordinator (Super+M / Ctrl+Alt+M)
 # ==============================================================================
-exec xfce4-terminal --title="Revenant Voice Assistant" --geometry=90x25 -e "/usr/local/bin/revenant-agent --mic"
+
+PID=""
+if [ -f /tmp/revenant_agent.pid ]; then
+  CANDIDATE=$(cat /tmp/revenant_agent.pid 2>/dev/null)
+  if [ -n "$CANDIDATE" ] && kill -0 "$CANDIDATE" 2>/dev/null; then
+    PID="$CANDIDATE"
+  fi
+fi
+
+if [ -z "$PID" ]; then
+  PID=$(pgrep -f "/usr/local/bin/revenant-agent" | head -n 1)
+fi
+
+if [ -n "$PID" ]; then
+  # Agent already running: bring existing window to front & trigger microphone directly
+  wmctrl -a "Revenant Field Agent" 2>/dev/null || \
+  wmctrl -a "Revenant" 2>/dev/null || \
+  xdotool search --name "Revenant" windowactivate 2>/dev/null || true
+
+  kill -USR1 "$PID" 2>/dev/null || true
+else
+  # Agent not running: launch exactly ONE terminal window with microphone active
+  exec xfce4-terminal --title="Revenant Field Agent" --geometry=100x30 -e "/usr/local/bin/revenant-agent --mic"
+fi
 VOICE_EOF
 chmod +x "$PATCH_ROOT/usr/local/bin/revenant-voice"
 
@@ -942,6 +1100,18 @@ done
 mkdir -p "$PATCH_ROOT/etc/xdg/xfce4/xfconf/xfce-perchannel-xml"
 cp -f "$PATCH_ROOT/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/"*.xml "$PATCH_ROOT/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/" 2>/dev/null || true
 
+# Ensure Toughbook audio capture defaults are unmuted and initialized on login
+mkdir -p "$PATCH_ROOT/etc/xdg/autostart"
+cat << 'AUDIO_AUTO_EOF' > "$PATCH_ROOT/etc/xdg/autostart/revenant-audio.desktop"
+[Desktop Entry]
+Type=Application
+Name=Revenant Audio Initializer
+Exec=sh -c "amixer -q set Capture 95% unmute; amixer -q set 'Capture',0 95% unmute; amixer -q set 'Internal Mic' 95% unmute; amixer -q set 'Mic' 95% unmute; amixer -q set 'Front Mic' 95% unmute; amixer -q set 'Mic Boost' 2 unmute; amixer -q set 'Capture Boost' 2 unmute; amixer -q set 'Input Source' 'Internal Mic' || amixer -q set 'Input Source' 'Mic'; amixer -q sset 'Capture' cap; amixer -q sset 'Internal Mic' cap 2>/dev/null || true"
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+AUDIO_AUTO_EOF
+
 chown -R 1001:1001 "$PATCH_ROOT/home/user" 2>/dev/null || true
 chown -R 1000:1000 "$PATCH_ROOT/home/revenant" 2>/dev/null || true
 
@@ -1139,6 +1309,40 @@ if [ -f "/mnt/target/etc/skel/Desktop/Switch_to_i3.desktop" ]; then
   chmod +x "/mnt/target/home/$NEW_USER/Desktop/Switch_to_i3.desktop" "/mnt/target/home/$NEW_USER/Desktop/Switch_to_XFCE.desktop"
 fi
 chroot /mnt/target chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/Desktop" 2>/dev/null || true
+
+# Deploy Revenant "R" avatar and eradicate Debian swirl for installed user
+if [ -f /mnt/target/usr/share/icons/revenant-logo.png ]; then
+  cp -f /mnt/target/usr/share/icons/revenant-logo.png "/mnt/target/home/$NEW_USER/.face" 2>/dev/null || true
+  cp -f /mnt/target/usr/share/icons/revenant-logo.png "/mnt/target/home/$NEW_USER/.face.icon" 2>/dev/null || true
+  cp -f /mnt/target/usr/share/icons/revenant-logo.png "/mnt/target/etc/skel/.face" 2>/dev/null || true
+  cp -f /mnt/target/usr/share/icons/revenant-logo.png "/mnt/target/etc/skel/.face.icon" 2>/dev/null || true
+  cp -f /mnt/target/usr/share/icons/revenant-logo.png "/mnt/target/root/.face" 2>/dev/null || true
+  cp -f /mnt/target/usr/share/icons/revenant-logo.png "/mnt/target/root/.face.icon" 2>/dev/null || true
+  for uhome in /mnt/target/home/*; do
+    if [ -d "$uhome" ]; then
+      cp -f /mnt/target/usr/share/icons/revenant-logo.png "$uhome/.face" 2>/dev/null || true
+      cp -f /mnt/target/usr/share/icons/revenant-logo.png "$uhome/.face.icon" 2>/dev/null || true
+      chroot /mnt/target chown -R "$NEW_USER:$NEW_USER" "$uhome/.face" "$uhome/.face.icon" 2>/dev/null || true
+    fi
+  done
+  mkdir -p /mnt/target/usr/share/images/desktop-base /mnt/target/usr/share/icons/desktop-base
+  for av_dest in /mnt/target/usr/share/images/desktop-base/avatar.png /mnt/target/usr/share/icons/desktop-base/avatar.png \
+                 /mnt/target/usr/share/images/desktop-base/avatar.svg /mnt/target/usr/share/icons/desktop-base/avatar.svg; do
+    cp -f /mnt/target/usr/share/icons/revenant-logo.png "$av_dest" 2>/dev/null || true
+  done
+fi
+
+# Ensure Toughbook audio capture defaults are unmuted and initialized on installed login
+mkdir -p /mnt/target/etc/xdg/autostart
+cat << 'AUDIO_AUTO_EOF' > /mnt/target/etc/xdg/autostart/revenant-audio.desktop
+[Desktop Entry]
+Type=Application
+Name=Revenant Audio Initializer
+Exec=sh -c "amixer -q set Capture 95% unmute; amixer -q set 'Capture',0 95% unmute; amixer -q set 'Internal Mic' 95% unmute; amixer -q set 'Mic' 95% unmute; amixer -q set 'Front Mic' 95% unmute; amixer -q set 'Mic Boost' 2 unmute; amixer -q set 'Capture Boost' 2 unmute; amixer -q set 'Input Source' 'Internal Mic' || amixer -q set 'Input Source' 'Mic'; amixer -q sset 'Capture' cap; amixer -q sset 'Internal Mic' cap 2>/dev/null || true"
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+AUDIO_AUTO_EOF
 
 echo "$NEW_HOST" > /mnt/target/etc/hostname
 cat << HOSTSEOF > /mnt/target/etc/hosts

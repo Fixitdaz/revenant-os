@@ -60,9 +60,12 @@ You do not need to reboot to switch between XFCE and i3:
 ---
 
 ## 🎙️ Global Voice Assistant Hotkey (`Super + M`)
-Revenant OS features a system-wide hotkey to talk directly to your offline field agent without touching the keyboard:
-- **`Super + M`** (Windows Key + M) — Pops open the floating **Revenant Voice Assistant** window, listens via microphone, transcribes with local Whisper STT, processes with Qwen2.5, and speaks the reply aloud via Piper TTS.
-- **Alternative Hotkeys**: `Ctrl + Alt + M` and `Super + V` also trigger the voice agent.
+Revenant OS features a system-wide hotkey to talk directly to your offline field agent without cluttering your desktop:
+- **`Super + M`** (Windows Key + M) — Single-window coordinator:
+  - If the **Revenant Field Agent** is already open, it brings the window to the front and activates voice listening inside the current session.
+  - If the agent is not running, it launches a single terminal instance with microphone mode ready.
+  - Spoken words are transcribed with local Whisper STT and pre-filled directly into the prompt (`revenant ❯ ...`) so you can review, edit, or hit Enter.
+- **Alternative Hotkeys**: `Ctrl + Alt + M` and `Super + V` also trigger the voice coordinator.
 - **Manual Command**: Run `revenant-voice` in any terminal or click the **"Revenant Voice Assistant"** desktop shortcut.
 
 ---
