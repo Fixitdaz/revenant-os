@@ -14,13 +14,13 @@
 ### Option A: Using Rufus (Windows)
 1. Download [Rufus](https://rufus.ie/).
 2. Insert your USB flash drive.
-3. Select `revenant_os_toughbook_v15_6.iso`.
+3. Select `revenant_os_1.0_build17.iso`.
 4. Partition scheme: **MBR**, Target system: **BIOS or UEFI**.
 5. Click **Start**. When prompted, select **Write in DD Image mode** (recommended for hybrid bootloaders).
 
 ### Option B: Using BalenaEtcher (Windows / macOS / Linux)
 1. Open BalenaEtcher.
-2. Select `revenant_os_toughbook_v15_6.iso`.
+2. Select `revenant_os_1.0_build17.iso`.
 3. Select your target USB stick.
 4. Click **Flash!**.
 

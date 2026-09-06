@@ -42,41 +42,39 @@ ai "Write a bash one-liner to parse failed logins in /var/log/auth.log"
   ov find "wifi configuration"
   ```
 
-### 4. Autonomous Agents (Hermes Agent & OpenInterpreter)
-Revenant OS pre-configures environment variables in `/etc/environment`:
-```bash
-OPENAI_API_BASE="http://127.0.0.1:8080/v1"
-OPENAI_API_KEY="sk-local-revenant"
-```
+### 4. Autonomous Field Agents
 
-#### Hermes Agent Setup
-Hermes Agent configuration (`~/.hermes/config.yaml`) includes a declared local provider:
-```yaml
-model:
-  default: "qwen2.5-coder-1.5b-instruct"
-  provider: "custom"
-  base_url: "http://127.0.0.1:8080/v1"
-  context_length: 20480
-custom_providers:
-  - name: "local"
-    base_url: "http://127.0.0.1:8080/v1"
-    models:
-      qwen2.5-coder-1.5b-instruct:
-        context_length: 20480
-auxiliary:
-  compression:
-    model: "qwen2.5-coder-1.5b-instruct"
-    context_length: 20480
-toolsets:
-  - "hermes-cli"
-```
-To launch an interactive session:
-```bash
-hermes
-```
+#### Revenant Custom Agent (`revenant-agent`)
+Revenant OS features a native, ultra-lightweight autonomous agent written in Python (`/usr/local/bin/revenant-agent`). Designed as a high-efficiency replacement for resource-heavy agent frameworks (such as Hermes), it operates with minimal token overhead and instant response times directly on Toughbook dual-core CPUs:
+
+- **Autonomous Tool Execution Loop**:
+  - `[EXEC: bash_command]` — Proposes bash commands for inspection or execution (e.g., hardware checks, package queries, network status). Prompts the user with `Execute? [Y/n/edit]` before running.
+  - `[READ: filepath]` — Reads and inspects files up to 4,000 characters.
+  - `[WRITE: filepath | content]` — Creates or overwrites configuration files or scripts.
+  - Tool outputs are fed back into the reasoning loop for autonomous follow-up analysis.
+
+- **Real-Time Hardware Telemetry**:
+  - On launch and during operation, the agent displays a dynamic telemetry header:
+    `Battery: 85% | Temp: 42.0°C | RAM: 1420/3890MB`
+
+- **Interactive Commands**:
+  - `/voice` — Toggles offline neural speech synthesis (Piper TTS) on or off in real time.
+  - `/sys` — Executes instant Toughbook hardware and system diagnostics (`uname`, `uptime`, `free`, `df`, `sensors`).
+  - `/clear` — Flushes conversation history back to the system prompt.
+  - `exit` or `quit` — Exits the agent cleanly.
+
+- **How to Launch**:
+  ```bash
+  revenant-agent
+  ```
+  Or run `ai` with no arguments, or click the **"Revenant Autonomous Agent"** desktop icon.
+
+> [!NOTE]
+> **Hermes Agent Decommissioning**  
+> Prior builds experimented with Hermes Agent. However, Hermes enforced high context memory floors (>4,000 to 64,000 tokens) and background auxiliary models that saturated mobile CPU cores and triggered client timeouts. In Build 17, Hermes has been fully purged from the OS image and replaced with the native Revenant Custom Agent.
 
 #### OpenInterpreter Setup
-To launch an interactive local coding agent:
+For multi-language code generation and automated script debugging, OpenInterpreter remains available and configured in `/etc/environment` pointing to `http://127.0.0.1:8080/v1`:
 ```bash
 interpreter
 ```
