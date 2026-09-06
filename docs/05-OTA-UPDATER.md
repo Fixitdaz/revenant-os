@@ -73,7 +73,7 @@ Every time `revenant-update` is executed with an active internet connection, it 
 ### Tier 2: Agent Stack, Memory & System Slimming
 - Synchronizes Python packages for OpenInterpreter and OpenViking.
 - Configures `openviking.service` automated context memory daemon.
-- **Purges Hermes Agent and OmniRoute**: Stops services, removes binaries, removes `ufw allow 20128/tcp`, saving ~350MB RAM and removing cloud telemetry dependencies.
+- **System Slimming & Hardening**: Strips legacy background services, closes unused firewall ports, and reclaims memory (~350MB RAM) for 100% sovereign offline operation.
 - Deploys the native **Revenant Custom Agent** (`/usr/local/bin/revenant-agent`) with real-time Toughbook telemetry, tool calling (`[EXEC]`, `[READ]`, `[WRITE]`), and voice commands (`/mic`, `/talk`, `/listen`).
 - Configures environment variables in `/etc/environment` (`OPENAI_API_BASE` and `OPENAI_API_KEY`).
 

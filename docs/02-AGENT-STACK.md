@@ -72,10 +72,6 @@ Revenant OS features a native, ultra-lightweight autonomous agent written in Pyt
   ```
   Or run `ai` with no arguments, or click the **"Revenant Autonomous Agent"** desktop icon.
 
-> [!NOTE]
-> **Hermes & OmniRoute Decommissioning**  
-> Prior builds experimented with Hermes Agent and OmniRoute. However, Hermes enforced high context memory floors (>4,000 to 64,000 tokens) and background auxiliary models that saturated mobile CPU cores, while OmniRoute (a Node.js cloud proxy) consumed 120–250MB RAM unnecessary on a sovereign offline machine. In Build 18, both Hermes and OmniRoute have been fully purged from the OS image and firewall rules, saving ~350MB RAM and guaranteeing 100% offline local autonomy.
-
 #### OpenInterpreter Setup
 For multi-language code generation and automated script debugging, OpenInterpreter remains available and configured in `/etc/environment` pointing to `http://127.0.0.1:8080/v1`:
 ```bash

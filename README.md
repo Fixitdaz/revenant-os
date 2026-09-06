@@ -11,7 +11,7 @@
 
 > [!IMPORTANT]
 > **Active Development & Work-in-Progress Disclaimer**  
-> Revenant OS is currently under active development. While Build 17 is our stable production milestone, **Build 18 Beta** introduces full-duplex offline voice interaction (Whisper Speech-to-Text + Piper Text-to-Speech), complete Debian login screen de-branding, and system slimming (~350MB RAM reclaimed by purging legacy Hermes & OmniRoute). New experimental features are isolated in the `beta` channel before promotion to stable.
+> Revenant OS is currently under active development. While Build 17 is our stable production milestone, **Build 18 Beta** introduces full-duplex offline voice interaction (Whisper Speech-to-Text + Piper Text-to-Speech), complete Debian login screen de-branding, and system slimming (~350MB RAM reclaimed by purging legacy services and cloud proxies). New experimental features are isolated in the `beta` channel before promotion to stable.
 
 ---
 
@@ -38,14 +38,14 @@ Instead of relying on mandatory cloud subscriptions, external API keys, or accou
 - Queryable anytime via `ov ls viking://resources/` or `ov find "query"`.
 
 ### 3. 🤖 Autonomous Field Agents Ready Out-of-the-Box
-- **Revenant Custom Agent (`revenant-agent`)**: A native, ultra-lightweight autonomous agent written in Python, replacing resource-heavy alternatives like Hermes. Engineered specifically for Toughbook dual-core CPUs:
+- **Revenant Custom Agent (`revenant-agent`)**: A native, ultra-lightweight autonomous agent written in Python, engineered specifically for Toughbook dual-core CPUs:
   - **Tool Execution**: Directly inspects the system, executes bash commands (`[EXEC: ...]`), reads files (`[READ: ...]`), and writes files (`[WRITE: ...]`) with user confirmation safeguards.
   - **Live Hardware Telemetry**: Automatically displays battery percentage, CPU thermal temperatures, and RAM metrics in the header.
   - **Voice & Interactive Controls**: `/mic` (speak into Toughbook mic with instant Whisper STT transcription), `/voice` (toggle speech synthesis on/off), `/sys` (hardware diagnostics), and `/clear` (reset conversation memory).
   - **Global Hotkey (`Super + M`)**: Press `Super + M` (or `Ctrl + Alt + M`) anywhere on the desktop to immediately trigger the floating voice assistant.
   - Launch anytime via `revenant-voice`, `revenant-agent`, `revenant-agent --mic`, `ai`, or the desktop shortcuts.
 - **OpenInterpreter**: Pre-configured in `/etc/environment` pointing to `http://127.0.0.1:8080/v1`. Inspects code, executes terminal commands, and edits files autonomously.
-- **100% Sovereign Offline Footprint**: Legacy cloud proxies (OmniRoute) and resource-heavy multi-agent frameworks (Hermes) are completely purged from the OS and firewall, saving ~350MB RAM.
+- **100% Sovereign Offline Footprint**: Completely self-contained offline architecture with zero external telemetry or cloud proxy dependencies. All inference, memory indexing, and speech recognition run 100% locally on device, saving ~350MB RAM.
 
 ### 4. 🖥️ Dual Desktop Environments: XFCE & i3
 - **De-Branded LightDM Login**: Completely de-branded login screen featuring the custom `revenant_bootsplash.png` background, Adwaita-dark theme, and the cybernetic Revenant **"R"** logo badge replacing the Debian swirl.

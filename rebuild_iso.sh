@@ -169,7 +169,7 @@ CONFIG_RD_LZ4=y
 CONFIG_RD_ZSTD=y
 CFG_EOF
 
-echo "[*] Purging OmniRoute and Hermes Agent..."
+echo "[*] Purging legacy services and background agents..."
 rm -f "$PATCH_ROOT/etc/systemd/system/omniroute.service"
 rm -f "$PATCH_ROOT/usr/local/bin/omniroute" "$PATCH_ROOT/usr/bin/omniroute"
 rm -f "$PATCH_ROOT/usr/local/bin/hermes" "$PATCH_ROOT/usr/bin/hermes"
