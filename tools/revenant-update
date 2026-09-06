@@ -183,7 +183,12 @@ for cf in /etc/lightdm/lightdm.conf.d/*.conf /usr/share/lightdm/lightdm.conf.d/*
 done
 
 # Explicitly configure LightDM greeter to show user list, session picker, and Revenant branding
-mkdir -p /etc/lightdm/lightdm.conf.d /etc/lightdm/lightdm-gtk-greeter.conf.d /usr/share/backgrounds /usr/share/images/desktop-base
+mkdir -p /etc/lightdm/lightdm.conf.d /etc/lightdm/lightdm-gtk-greeter.conf.d /usr/share/backgrounds /usr/share/images/desktop-base /usr/share/icons
+
+# Purge any Debian greeter config overrides so they cannot override Revenant settings
+rm -f /etc/lightdm/lightdm-gtk-greeter.conf.d/*debian*.conf 2>/dev/null || true
+rm -f /usr/share/lightdm/lightdm-gtk-greeter.conf.d/*debian*.conf 2>/dev/null || true
+rm -f /etc/lightdm/lightdm-gtk-greeter.conf.d/01-revenant.conf 2>/dev/null || true
 
 # Download or install Revenant wallpaper & boot splash if missing
 if [ ! -f /usr/share/backgrounds/revenant_bootsplash.png ] || [ "$FORCE" = true ]; then
@@ -195,12 +200,35 @@ if [ ! -f /usr/share/backgrounds/revenant_wallpaper.jpg ] || [ "$FORCE" = true ]
     "https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/$TARGET_BRANCH/revenant_wallpaper.jpg" 2>/dev/null || true
 fi
 
+# Deploy Revenant "R" Logo & Avatar for LightDM login box
+if [ ! -f /usr/share/icons/revenant-logo.png ] || [ "$FORCE" = true ]; then
+  curl -fsSL -o /usr/share/icons/revenant-logo.png \
+    "https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/$TARGET_BRANCH/revenant_logo.png" 2>/dev/null || true
+fi
+
+# Fallback base64 generation of Revenant "R" logo if download was empty
+if [ ! -s /usr/share/icons/revenant-logo.png ]; then
+  cat << 'B64_LOGO' | base64 -d > /usr/share/icons/revenant-logo.png
+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
+B64_LOGO
+fi
+cp -f /usr/share/icons/revenant-logo.png /usr/share/icons/revenant-avatar.png 2>/dev/null || true
+
 # Override Debian desktop-base symlinks and login backgrounds with Revenant artwork
 if [ -f /usr/share/backgrounds/revenant_bootsplash.png ]; then
   cp -f /usr/share/backgrounds/revenant_bootsplash.png /usr/share/images/desktop-base/desktop-background 2>/dev/null || true
   cp -f /usr/share/backgrounds/revenant_bootsplash.png /usr/share/images/desktop-base/login-background.svg 2>/dev/null || true
   cp -f /usr/share/backgrounds/revenant_bootsplash.png /boot/grub/splash.png 2>/dev/null || true
+  update-alternatives --install /usr/share/images/desktop-base/desktop-background desktop-background /usr/share/backgrounds/revenant_bootsplash.png 100 2>/dev/null || true
+  update-alternatives --set desktop-background /usr/share/backgrounds/revenant_bootsplash.png 2>/dev/null || true
 fi
+
+# Neutralize vendor Debian logo icons with the Revenant badge
+for deb_icon in /usr/share/icons/desktop-base/debian.svg /usr/share/icons/desktop-base/debian-logo.svg /usr/share/icons/hicolor/scalable/apps/debian-logo.svg; do
+  if [ -f "$deb_icon" ]; then
+    cp -f /usr/share/icons/revenant-logo.png "$deb_icon" 2>/dev/null || true
+  fi
+done
 
 cat << 'GREETER_EOF' > /etc/lightdm/lightdm.conf.d/01-revenant-greeter.conf
 [Seat:*]
@@ -212,7 +240,7 @@ greeter-show-manual-login=true
 user-session=xfce
 GREETER_EOF
 
-cat << 'GREETER_CONF_EOF' > /etc/lightdm/lightdm-gtk-greeter.conf.d/01-revenant.conf
+cat << 'GREETER_CONF_EOF' > /etc/lightdm/lightdm-gtk-greeter.conf.d/99_revenant.conf
 [greeter]
 background = /usr/share/backgrounds/revenant_bootsplash.png
 theme-name = Adwaita-dark
@@ -225,16 +253,29 @@ xft-hintstyle = slight
 xft-rgba = rgb
 indicators = ~host;~spacer;~clock;~spacer;~session;~power
 clock-format = %a, %d %b  %H:%M
-default-user-image = #avatar-default
+default-user-image = /usr/share/icons/revenant-avatar.png
+logo = /usr/share/icons/revenant-logo.png
 hide-user-image = false
 GREETER_CONF_EOF
 
-# Remove any vendor Debian logo overrides in lightdm-gtk-greeter.conf
-if [ -f /etc/lightdm/lightdm-gtk-greeter.conf ]; then
-  sed -i -E 's/^[[:space:]]*logo[[:space:]]*=.*/#logo=/' /etc/lightdm/lightdm-gtk-greeter.conf 2>/dev/null || true
-  sed -i -E 's/^[[:space:]]*background[[:space:]]*=.*/background=\/usr\/share\/backgrounds\/revenant_bootsplash.png/' /etc/lightdm/lightdm-gtk-greeter.conf 2>/dev/null || true
-  sed -i -E 's/^[[:space:]]*default-user-image[[:space:]]*=.*/default-user-image=#avatar-default/' /etc/lightdm/lightdm-gtk-greeter.conf 2>/dev/null || true
-fi
+# Also update /etc/lightdm/lightdm-gtk-greeter.conf directly
+cat << 'GREETER_MAIN_EOF' > /etc/lightdm/lightdm-gtk-greeter.conf
+[greeter]
+background = /usr/share/backgrounds/revenant_bootsplash.png
+theme-name = Adwaita-dark
+icon-theme-name = Papirus-Dark
+cursor-theme-name = Adwaita
+font-name = Sans 10
+xft-antialias = true
+xft-dpi = 96
+xft-hintstyle = slight
+xft-rgba = rgb
+indicators = ~host;~spacer;~clock;~spacer;~session;~power
+clock-format = %a, %d %b  %H:%M
+default-user-image = /usr/share/icons/revenant-avatar.png
+logo = /usr/share/icons/revenant-logo.png
+hide-user-image = false
+GREETER_MAIN_EOF
 
 # Ensure registered session files exist for both XFCE and i3 in LightDM
 mkdir -p /usr/share/xsessions
@@ -831,6 +872,16 @@ except Exception as e:
 PYEOF
 chmod +x /usr/local/bin/ai
 
+# Deploy instant Voice Assistant helper script (/usr/local/bin/revenant-voice)
+cat << 'VOICE_EOF' > /usr/local/bin/revenant-voice
+#!/bin/bash
+# ==============================================================================
+# Revenant Voice Agent Quick Launcher (Super+M / Ctrl+Alt+M)
+# ==============================================================================
+exec xfce4-terminal --title="Revenant Voice Assistant" --geometry=90x25 -e "/usr/local/bin/revenant-agent --mic"
+VOICE_EOF
+chmod +x /usr/local/bin/revenant-voice
+
 # Update Desktop Launchers for AI stack
 for ddir in /etc/skel/Desktop /root/Desktop /home/*/Desktop; do
   if [ -d "$ddir" ]; then
@@ -863,13 +914,26 @@ Categories=System;Utility;Development;
 AGENTDESK_EOF
     chmod +x "$ddir/Revenant_Agent.desktop"
 
+    cat << 'VOICEDESK_EOF' > "$ddir/Revenant_Voice.desktop"
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Revenant Voice Assistant (Super+M)
+Comment=Talk directly to Revenant Agent using local Whisper STT & Piper TTS
+Exec=/usr/local/bin/revenant-voice
+Icon=audio-input-microphone
+Terminal=false
+StartupNotify=true
+Categories=AudioVideo;Utility;
+VOICEDESK_EOF
+    chmod +x "$ddir/Revenant_Voice.desktop"
+
     u_owner=$(stat -c '%u:%g' "$ddir" 2>/dev/null || echo "1000:1000")
-    chown "$u_owner" "$ddir/Start_AI_Engine.desktop" "$ddir/Revenant_Agent.desktop" 2>/dev/null || true
+    chown "$u_owner" "$ddir/Start_AI_Engine.desktop" "$ddir/Revenant_Agent.desktop" "$ddir/Revenant_Voice.desktop" 2>/dev/null || true
   fi
 done
 
-
-echo -e "${GREEN}[✓] Universal 'ai' terminal tool and Desktop AI Launcher updated.${RESET}"
+echo -e "${GREEN}[✓] Universal 'ai' terminal tool, voice launcher, and Desktop AI Launchers updated.${RESET}"
 
 # TIER 3.5: Dual Desktop Environments (XFCE & i3) & Login Greeter
 echo ""
@@ -997,7 +1061,187 @@ if [ ! -f /usr/share/xsessions/xfce.desktop ] && [ -f /usr/share/xsessions/xubun
   cp /usr/share/xsessions/xubuntu.desktop /usr/share/xsessions/xfce.desktop
 fi
 
-echo -e "${GREEN}[✓] Dual desktop environments (XFCE / i3) & LightDM login greeter configured.${RESET}"
+# 5. Configure Global Microphone Hotkeys (<Super>m, <Primary><Alt>m, <Super>v)
+echo -e "${CYAN}  -> Configuring Global Microphone Hotkey (Super+M / Ctrl+Alt+M)...${RESET}"
+
+# Configure i3 window manager hotkeys
+for i3_cfg in /etc/i3/config /etc/skel/.config/i3/config /root/.config/i3/config /home/*/.config/i3/config; do
+  if [ -f "$i3_cfg" ]; then
+    if ! grep -q "revenant-voice" "$i3_cfg" 2>/dev/null; then
+      cat << 'I3_HOTKEY' >> "$i3_cfg"
+
+# Revenant OS Voice Assistant Hotkeys
+bindsym $mod+m exec --no-startup-id /usr/local/bin/revenant-voice
+bindsym Mod1+Control+m exec --no-startup-id /usr/local/bin/revenant-voice
+bindsym $mod+v exec --no-startup-id /usr/local/bin/revenant-voice
+I3_HOTKEY
+    fi
+  fi
+done
+
+# Configure XFCE keyboard shortcuts XML
+python3 -c "
+import xml.etree.ElementTree as ET, os, glob
+
+dirs = ['/etc/skel', '/root'] + glob.glob('/home/*')
+for base in dirs:
+    path = os.path.join(base, '.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-keyboard-shortcuts.xml')
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    root = None
+    if os.path.exists(path):
+        try:
+            tree = ET.parse(path)
+            root = tree.getroot()
+        except Exception:
+            root = None
+    if root is None:
+        root = ET.Element('channel', attrib={'name': 'xfce4-keyboard-shortcuts', 'version': '1.0'})
+        tree = ET.ElementTree(root)
+    
+    cmd_prop = root.find(\"./property[@name='commands']\")
+    if cmd_prop is None:
+        cmd_prop = ET.SubElement(root, 'property', attrib={'name': 'commands', 'type': 'empty'})
+    custom_prop = cmd_prop.find(\"./property[@name='custom']\")
+    if custom_prop is None:
+        custom_prop = ET.SubElement(cmd_prop, 'property', attrib={'name': 'custom', 'type': 'empty'})
+    
+    shortcuts = {
+        '<Super>m': '/usr/local/bin/revenant-voice',
+        '<Primary><Alt>m': '/usr/local/bin/revenant-voice',
+        '<Super>v': '/usr/local/bin/revenant-voice'
+    }
+    for sc, val in shortcuts.items():
+        existing = custom_prop.find(f\"./property[@name='{sc}']\")
+        if existing is not None:
+            existing.attrib['value'] = val
+            existing.attrib['type'] = 'string'
+        else:
+            ET.SubElement(custom_prop, 'property', attrib={'name': sc, 'type': 'string', 'value': val})
+    try:
+        tree.write(path, encoding='utf-8', xml_declaration=True)
+    except Exception:
+        pass
+" 2>/dev/null || true
+
+# 6. Apply Full Cyber Dark Theme & Black Top Panel for XFCE
+echo -e "${CYAN}  -> Configuring Cyber Dark Theme & Black Top Panel for XFCE...${RESET}"
+
+# Deploy GTK3 CSS override to make xfce4-panel solid black with clean white text/icons
+for gtk_base in /etc/skel /root /home/*; do
+  gtk_dir="$gtk_base/.config/gtk-3.0"
+  if [ -d "$gtk_base" ]; then
+    mkdir -p "$gtk_dir"
+    cat << 'GTK_CSS' > "$gtk_dir/gtk.css"
+/* Revenant OS Cyber Dark Desktop & Top Bar */
+.xfce4-panel {
+    background-color: #0b0f17;
+    color: #e2e8f0;
+    border-bottom: 1px solid #1e293b;
+}
+.xfce4-panel button {
+    color: #e2e8f0;
+    background-color: transparent;
+}
+.xfce4-panel button:hover {
+    background-color: #1e293b;
+    color: #00f0ff;
+}
+.xfce4-panel label {
+    color: #e2e8f0;
+}
+window.xfce4-panel {
+    background-color: #0b0f17;
+}
+GTK_CSS
+    u_owner=$(stat -c '%u:%g' "$gtk_base" 2>/dev/null || echo "1000:1000")
+    chown -R "$u_owner" "$gtk_dir" 2>/dev/null || true
+  fi
+done
+
+# Deploy XFCE default channel configurations (Adwaita-dark, Papirus-Dark, dark panel)
+mkdir -p /etc/xdg/xfce4/xfconf/xfce-perchannel-xml
+for xf_base in /etc/skel /root /home/* /etc/xdg; do
+  if [ "$xf_base" = "/etc/xdg" ]; then
+    xf_dir="/etc/xdg/xfce4/xfconf/xfce-perchannel-xml"
+  else
+    xf_dir="$xf_base/.config/xfce4/xfconf/xfce-perchannel-xml"
+  fi
+  if [ -d "$xf_base" ]; then
+    mkdir -p "$xf_dir"
+    # xsettings: Dark theme and Dark icons
+    cat << 'XSET_EOF' > "$xf_dir/xsettings.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xsettings" version="1.0">
+  <property name="Net" type="empty">
+    <property name="ThemeName" type="string" value="Adwaita-dark"/>
+    <property name="IconThemeName" type="string" value="Papirus-Dark"/>
+    <property name="EnableEventSounds" type="bool" value="false"/>
+    <property name="EnableInputFeedbackSounds" type="bool" value="false"/>
+  </property>
+  <property name="Xft" type="empty">
+    <property name="DPI" type="int" value="96"/>
+    <property name="Antialias" type="int" value="1"/>
+    <property name="Hinting" type="int" value="1"/>
+    <property name="HintStyle" type="string" value="hintslight"/>
+    <property name="RGBA" type="string" value="rgb"/>
+  </property>
+  <property name="Gtk" type="empty">
+    <property name="CursorThemeName" type="string" value="Adwaita"/>
+    <property name="CursorThemeSize" type="int" value="24"/>
+    <property name="DecorationLayout" type="string" value="menu:minimize,maximize,close"/>
+  </property>
+</channel>
+XSET_EOF
+
+    # xfwm4: Dark window title bars and borders
+    cat << 'XFWM_EOF' > "$xf_dir/xfwm4.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <property name="theme" type="string" value="Adwaita-dark"/>
+    <property name="title_alignment" type="string" value="left"/>
+    <property name="use_compositing" type="bool" value="true"/>
+  </property>
+</channel>
+XFWM_EOF
+
+    # xfce4-panel: Solid dark black top panel
+    cat << 'XFPANEL_EOF' > "$xf_dir/xfce4-panel.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-panel" version="1.0">
+  <property name="panels" type="empty">
+    <property name="panel-1" type="empty">
+      <property name="background-style" type="uint" value="1"/>
+      <property name="background-rgba" type="array">
+        <value type="double" value="0.043"/>
+        <value type="double" value="0.058"/>
+        <value type="double" value="0.090"/>
+        <value type="double" value="1.0"/>
+      </property>
+      <property name="dark-mode" type="bool" value="true"/>
+    </property>
+  </property>
+</channel>
+XFPANEL_EOF
+
+    u_owner=$(stat -c '%u:%g' "$xf_base" 2>/dev/null || echo "1000:1000")
+    chown -R "$u_owner" "$xf_dir" 2>/dev/null || true
+  fi
+done
+
+# If running inside active X session, apply changes live
+if [ -n "$DISPLAY" ]; then
+  xfconf-query -c xsettings -p "/Net/ThemeName" -s "Adwaita-dark" --create -t string 2>/dev/null || true
+  xfconf-query -c xsettings -p "/Net/IconThemeName" -s "Papirus-Dark" --create -t string 2>/dev/null || true
+  xfconf-query -c xfwm4 -p "/general/theme" -s "Adwaita-dark" --create -t string 2>/dev/null || true
+  xfconf-query -c xfce4-panel -p "/panels/panel-1/background-style" -s 1 --create -t uint 2>/dev/null || true
+  xfconf-query -c xfce4-panel -p "/panels/panel-1/dark-mode" -s true --create -t bool 2>/dev/null || true
+  xfconf-query -c xfce4-keyboard-shortcuts -p "/commands/custom/<Super>m" -s "/usr/local/bin/revenant-voice" --create -t string 2>/dev/null || true
+  xfconf-query -c xfce4-keyboard-shortcuts -p "/commands/custom/<Primary><Alt>m" -s "/usr/local/bin/revenant-voice" --create -t string 2>/dev/null || true
+  xfconf-query -c xfce4-keyboard-shortcuts -p "/commands/custom/<Super>v" -s "/usr/local/bin/revenant-voice" --create -t string 2>/dev/null || true
+fi
+
+echo -e "${GREEN}[✓] Dual desktop environments (XFCE / i3), Dark Theme & Voice Hotkey (Super+M) configured.${RESET}"
 
 # TIER 4: Offline Neural TTS (Piper)
 echo ""
@@ -1102,6 +1346,21 @@ apt-get update -qq
 apt-get upgrade -y -qq || true
 apt-get autoremove -y -qq || true
 echo -e "${GREEN}[✓] Security packages and hardware profiles synchronized.${RESET}"
+
+# Configure and harden UFW firewall
+echo -e "${CYAN}[*] Hardening Toughbook System Firewall (UFW)...${RESET}"
+if ! command -v ufw >/dev/null 2>&1; then
+  echo -e "${CYAN}  -> Installing ufw package...${RESET}"
+  apt-get install -y --no-install-recommends ufw
+fi
+ufw --force reset >/dev/null 2>&1 || true
+ufw default deny incoming >/dev/null 2>&1 || true
+ufw default allow outgoing >/dev/null 2>&1 || true
+ufw allow 22/tcp comment 'SSH' >/dev/null 2>&1 || true
+ufw --force enable >/dev/null 2>&1 || true
+systemctl enable ufw >/dev/null 2>&1 || true
+systemctl restart ufw >/dev/null 2>&1 || true
+echo -e "${GREEN}[✓] UFW firewall active (default deny incoming, SSH 22/tcp allowed).${RESET}"
 
 # Update GRUB boot menu title to display current release
 if [ -f /boot/grub/grub.cfg ]; then

@@ -42,20 +42,22 @@ Instead of relying on mandatory cloud subscriptions, external API keys, or accou
   - **Tool Execution**: Directly inspects the system, executes bash commands (`[EXEC: ...]`), reads files (`[READ: ...]`), and writes files (`[WRITE: ...]`) with user confirmation safeguards.
   - **Live Hardware Telemetry**: Automatically displays battery percentage, CPU thermal temperatures, and RAM metrics in the header.
   - **Voice & Interactive Controls**: `/mic` (speak into Toughbook mic with instant Whisper STT transcription), `/voice` (toggle speech synthesis on/off), `/sys` (hardware diagnostics), and `/clear` (reset conversation memory).
-  - Launch anytime via `revenant-agent`, `revenant-agent --mic`, `ai`, or the **"Revenant Autonomous Agent"** desktop shortcut.
+  - **Global Hotkey (`Super + M`)**: Press `Super + M` (or `Ctrl + Alt + M`) anywhere on the desktop to immediately trigger the floating voice assistant.
+  - Launch anytime via `revenant-voice`, `revenant-agent`, `revenant-agent --mic`, `ai`, or the desktop shortcuts.
 - **OpenInterpreter**: Pre-configured in `/etc/environment` pointing to `http://127.0.0.1:8080/v1`. Inspects code, executes terminal commands, and edits files autonomously.
 - **100% Sovereign Offline Footprint**: Legacy cloud proxies (OmniRoute) and resource-heavy multi-agent frameworks (Hermes) are completely purged from the OS and firewall, saving ~350MB RAM.
 
 ### 4. 🖥️ Dual Desktop Environments: XFCE & i3
-- **De-Branded LightDM Login**: Completely de-branded login screen featuring the custom `revenant_bootsplash.png` background, Adwaita-dark theme, and removal of default Debian swirl icons.
-- **XFCE Desktop**: Polished, low-footprint traditional desktop with custom edge-to-edge Revenant cyber skull wallpaper, customized dock, and graphical administration tools.
+- **De-Branded LightDM Login**: Completely de-branded login screen featuring the custom `revenant_bootsplash.png` background, Adwaita-dark theme, and the cybernetic Revenant **"R"** logo badge replacing the Debian swirl.
+- **Cyber Dark Theme & Obsidian Top Bar**: Full system dark theme (`Adwaita-dark`, `Papirus-Dark`) featuring a solid obsidian black panel (`#0b0f17`) with crisp white/cyan text and icons across the top of the screen.
 - **i3 Tiling Window Manager**: Blazing-fast, purely keyboard-driven tiling window manager configured with instant terminal launching (`Mod+Enter`), application menus (`Mod+d`), workspace switching (`Mod+1..9`), and desktop status bars.
 - **Flexible Session Switching**:
   - **At Boot / Login**: The LightDM greeter provides an account selector and a session dropdown (top-right of screen) allowing you to choose between **Xfce Session** and **i3**.
   - **Inside XFCE**: Click the **"Switch to i3"** desktop icon or run `switch-to-i3` in any terminal to switch instantly.
   - **Inside i3**: Click the **"Switch to XFCE"** desktop icon or run `switch-to-xfce` in any terminal to return to the full graphical desktop.
 
-### 5. 🚜 Panasonic Toughbook CF-52 Hardware Hardening
+### 5. 🚜 Panasonic Toughbook CF-52 Hardware Hardening & Security
+- **Hardened System Firewall (UFW)**: Pre-installed and active by default (`ufw status`). Configured to deny all unsolicited incoming connections while permitting outbound connections and SSH (`22/tcp`).
 - **Legacy Graphics Acceleration**: Out-of-the-box configuration for Intel GMA 4500MHD / Intel HD graphics via `xserver-xorg-video-intel` and Mesa 3D DRI acceleration.
 - **Toughbook Hotkey & Chassis Drivers**: Automatic loading of `panasonic-laptop` kernel driver for hotkeys, brightness controls, battery sensors, and thermal management.
 - **Wireless Drivers**: Firmware for Intel PRO/Wireless & Centrino (`firmware-iwlwifi`), Atheros (`firmware-atheros`), Realtek, and Broadcom.

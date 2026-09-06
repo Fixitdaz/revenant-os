@@ -59,6 +59,23 @@ You do not need to reboot to switch between XFCE and i3:
 
 ---
 
+## 🎙️ Global Voice Assistant Hotkey (`Super + M`)
+Revenant OS features a system-wide hotkey to talk directly to your offline field agent without touching the keyboard:
+- **`Super + M`** (Windows Key + M) — Pops open the floating **Revenant Voice Assistant** window, listens via microphone, transcribes with local Whisper STT, processes with Qwen2.5, and speaks the reply aloud via Piper TTS.
+- **Alternative Hotkeys**: `Ctrl + Alt + M` and `Super + V` also trigger the voice agent.
+- **Manual Command**: Run `revenant-voice` in any terminal or click the **"Revenant Voice Assistant"** desktop shortcut.
+
+---
+
+## 🎨 Cyber Dark Theme & Obsidian Top Bar
+Revenant OS uses a unified, low-light tactical dark theme designed for nighttime and field use:
+- **GTK & Window Theme**: `Adwaita-dark` window borders and dark widget backgrounds.
+- **Icon Theme**: `Papirus-Dark` with high-contrast tactical emblems.
+- **Top Panel**: Solid black/obsidian styling (`#0b0f17`) with crisp off-white text and neon cyan accents, eliminating glaring white borders.
+- **Login Screen**: Fully de-branded LightDM greeter with custom `revenant_bootsplash.png` background, dark controls, and the cybernetic Revenant **"R"** logo badge replacing the Debian swirl.
+
+---
+
 ## Restoring Default Configurations
 If you ever need to restore your desktop shortcuts or configuration files to stock settings:
 ```bash

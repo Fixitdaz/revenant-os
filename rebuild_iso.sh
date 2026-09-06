@@ -69,7 +69,8 @@ chroot "$PATCH_ROOT" apt-get install -y --no-install-recommends \
   i3 \
   i3status \
   dmenu \
-  feh
+  feh \
+  ufw
 
 # Install Bitwarden Desktop deb
 if [ -f "$CACHE_DIR/Bitwarden-amd64.deb" ]; then
@@ -175,7 +176,13 @@ for target_dir in "$PATCH_ROOT/root/.hermes" "$PATCH_ROOT/etc/skel/.hermes" "$PA
 done
 
 echo "[*] Configuring LightDM login screen branding & de-branding Debian..."
-mkdir -p "$PATCH_ROOT/usr/share/backgrounds" "$PATCH_ROOT/usr/share/images/desktop-base" "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf.d"
+mkdir -p "$PATCH_ROOT/usr/share/backgrounds" "$PATCH_ROOT/usr/share/images/desktop-base" "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf.d" "$PATCH_ROOT/usr/share/icons"
+
+# Purge any Debian greeter config overrides
+rm -f "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf.d/"*debian*.conf 2>/dev/null || true
+rm -f "$PATCH_ROOT/usr/share/lightdm/lightdm-gtk-greeter.conf.d/"*debian*.conf 2>/dev/null || true
+rm -f "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf.d/01-revenant.conf" 2>/dev/null || true
+
 if [ -f "$SCRIPT_DIR/revenant_bootsplash.png" ]; then
   cp -f "$SCRIPT_DIR/revenant_bootsplash.png" "$PATCH_ROOT/usr/share/backgrounds/revenant_bootsplash.png"
   cp -f "$SCRIPT_DIR/revenant_bootsplash.png" "$PATCH_ROOT/usr/share/images/desktop-base/desktop-background"
@@ -185,8 +192,19 @@ fi
 if [ -f "$SCRIPT_DIR/revenant_wallpaper.jpg" ]; then
   cp -f "$SCRIPT_DIR/revenant_wallpaper.jpg" "$PATCH_ROOT/usr/share/backgrounds/revenant_wallpaper.jpg"
 fi
+if [ -f "$SCRIPT_DIR/revenant_logo.png" ]; then
+  cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/usr/share/icons/revenant-logo.png"
+  cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/usr/share/icons/revenant-avatar.png"
+fi
 
-cat << 'GREETER_CONF_EOF' > "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf.d/01-revenant.conf"
+# Neutralize vendor Debian logo icons with the Revenant badge
+for deb_icon in "$PATCH_ROOT/usr/share/icons/desktop-base/debian.svg" "$PATCH_ROOT/usr/share/icons/desktop-base/debian-logo.svg" "$PATCH_ROOT/usr/share/icons/hicolor/scalable/apps/debian-logo.svg"; do
+  if [ -f "$deb_icon" ] && [ -f "$SCRIPT_DIR/revenant_logo.png" ]; then
+    cp -f "$SCRIPT_DIR/revenant_logo.png" "$deb_icon" 2>/dev/null || true
+  fi
+done
+
+cat << 'GREETER_CONF_EOF' > "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf.d/99_revenant.conf"
 [greeter]
 background = /usr/share/backgrounds/revenant_bootsplash.png
 theme-name = Adwaita-dark
@@ -199,15 +217,28 @@ xft-hintstyle = slight
 xft-rgba = rgb
 indicators = ~host;~spacer;~clock;~spacer;~session;~power
 clock-format = %a, %d %b  %H:%M
-default-user-image = #avatar-default
+default-user-image = /usr/share/icons/revenant-avatar.png
+logo = /usr/share/icons/revenant-logo.png
 hide-user-image = false
 GREETER_CONF_EOF
 
-if [ -f "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf" ]; then
-  sed -i -E 's/^[[:space:]]*logo[[:space:]]*=.*/#logo=/' "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf" 2>/dev/null || true
-  sed -i -E 's/^[[:space:]]*background[[:space:]]*=.*/background=\/usr\/share\/backgrounds\/revenant_bootsplash.png/' "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf" 2>/dev/null || true
-  sed -i -E 's/^[[:space:]]*default-user-image[[:space:]]*=.*/default-user-image=#avatar-default/' "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf" 2>/dev/null || true
-fi
+cat << 'GREETER_MAIN_EOF' > "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf"
+[greeter]
+background = /usr/share/backgrounds/revenant_bootsplash.png
+theme-name = Adwaita-dark
+icon-theme-name = Papirus-Dark
+cursor-theme-name = Adwaita
+font-name = Sans 10
+xft-antialias = true
+xft-dpi = 96
+xft-hintstyle = slight
+xft-rgba = rgb
+indicators = ~host;~spacer;~clock;~spacer;~session;~power
+clock-format = %a, %d %b  %H:%M
+default-user-image = /usr/share/icons/revenant-avatar.png
+logo = /usr/share/icons/revenant-logo.png
+hide-user-image = false
+GREETER_MAIN_EOF
 
 echo "[*] Setting up Whisper STT and deploying voice-enabled Revenant Custom Agent..."
 mkdir -p "$PATCH_ROOT/opt/whisper/models"
@@ -690,7 +721,17 @@ revenant-agent
 STARTEOF
 chmod +x "$PATCH_ROOT/usr/local/bin/revenant-services"
 
-# Create Desktop launcher
+# Deploy instant Voice Assistant helper script
+cat << 'VOICE_EOF' > "$PATCH_ROOT/usr/local/bin/revenant-voice"
+#!/bin/bash
+# ==============================================================================
+# Revenant Voice Agent Quick Launcher (Super+M / Ctrl+Alt+M)
+# ==============================================================================
+exec xfce4-terminal --title="Revenant Voice Assistant" --geometry=90x25 -e "/usr/local/bin/revenant-agent --mic"
+VOICE_EOF
+chmod +x "$PATCH_ROOT/usr/local/bin/revenant-voice"
+
+# Create Desktop launchers
 for ddir in "$PATCH_ROOT/etc/skel/Desktop" "$PATCH_ROOT/home/user/Desktop" "$PATCH_ROOT/home/revenant/Desktop"; do
   mkdir -p "$ddir"
   cat << 'DESKEOF' > "$ddir/Start_AI_Engine.desktop"
@@ -720,6 +761,20 @@ StartupNotify=true
 Categories=System;Utility;Development;
 AGENTDESK_EOF
   chmod +x "$ddir/Revenant_Agent.desktop"
+
+  cat << 'VOICEDESK_EOF' > "$ddir/Revenant_Voice.desktop"
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Revenant Voice Assistant (Super+M)
+Comment=Talk directly to Revenant Agent using local Whisper STT & Piper TTS
+Exec=/usr/local/bin/revenant-voice
+Icon=audio-input-microphone
+Terminal=false
+StartupNotify=true
+Categories=AudioVideo;Utility;
+VOICEDESK_EOF
+  chmod +x "$ddir/Revenant_Voice.desktop"
 done
 
 # Create switch-to-i3 and switch-to-xfce utilities
@@ -776,8 +831,126 @@ for ddir in "$PATCH_ROOT/etc/skel/Desktop" "$PATCH_ROOT/home/user/Desktop" "$PAT
   chmod +x "$ddir/Switch_to_i3.desktop" "$ddir/Switch_to_XFCE.desktop"
 done
 
-chown -R 1001:1001 "$PATCH_ROOT/home/user/Desktop" 2>/dev/null || true
-chown -R 1000:1000 "$PATCH_ROOT/home/revenant/Desktop" 2>/dev/null || true
+echo "[*] Configuring desktop dark theme, black top panel & keyboard shortcuts..."
+# Deploy GTK3 CSS override for solid black panel and crisp contrast
+for u_home in "$PATCH_ROOT/etc/skel" "$PATCH_ROOT/home/user" "$PATCH_ROOT/home/revenant" "$PATCH_ROOT/root"; do
+  mkdir -p "$u_home/.config/gtk-3.0"
+  cat << 'GTK_CSS' > "$u_home/.config/gtk-3.0/gtk.css"
+/* Revenant OS Cyber Dark Desktop & Top Bar */
+.xfce4-panel {
+    background-color: #0b0f17;
+    color: #e2e8f0;
+    border-bottom: 1px solid #1e293b;
+}
+.xfce4-panel button {
+    color: #e2e8f0;
+    background-color: transparent;
+}
+.xfce4-panel button:hover {
+    background-color: #1e293b;
+    color: #00f0ff;
+}
+.xfce4-panel label {
+    color: #e2e8f0;
+}
+window.xfce4-panel {
+    background-color: #0b0f17;
+}
+GTK_CSS
+
+  mkdir -p "$u_home/.config/xfce4/xfconf/xfce-perchannel-xml"
+  cat << 'XSET_EOF' > "$u_home/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xsettings" version="1.0">
+  <property name="Net" type="empty">
+    <property name="ThemeName" type="string" value="Adwaita-dark"/>
+    <property name="IconThemeName" type="string" value="Papirus-Dark"/>
+    <property name="EnableEventSounds" type="bool" value="false"/>
+    <property name="EnableInputFeedbackSounds" type="bool" value="false"/>
+  </property>
+  <property name="Xft" type="empty">
+    <property name="DPI" type="int" value="96"/>
+    <property name="Antialias" type="int" value="1"/>
+    <property name="Hinting" type="int" value="1"/>
+    <property name="HintStyle" type="string" value="hintslight"/>
+    <property name="RGBA" type="string" value="rgb"/>
+  </property>
+  <property name="Gtk" type="empty">
+    <property name="CursorThemeName" type="string" value="Adwaita"/>
+    <property name="CursorThemeSize" type="int" value="24"/>
+    <property name="DecorationLayout" type="string" value="menu:minimize,maximize,close"/>
+  </property>
+</channel>
+XSET_EOF
+
+  cat << 'XFWM_EOF' > "$u_home/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <property name="theme" type="string" value="Adwaita-dark"/>
+    <property name="title_alignment" type="string" value="left"/>
+    <property name="use_compositing" type="bool" value="true"/>
+  </property>
+</channel>
+XFWM_EOF
+
+  cat << 'XFPANEL_EOF' > "$u_home/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-panel" version="1.0">
+  <property name="panels" type="empty">
+    <property name="panel-1" type="empty">
+      <property name="background-style" type="uint" value="1"/>
+      <property name="background-rgba" type="array">
+        <value type="double" value="0.043"/>
+        <value type="double" value="0.058"/>
+        <value type="double" value="0.090"/>
+        <value type="double" value="1.0"/>
+      </property>
+      <property name="dark-mode" type="bool" value="true"/>
+    </property>
+  </property>
+</channel>
+XFPANEL_EOF
+
+  cat << 'SHORTCUTS_EOF' > "$u_home/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-keyboard-shortcuts.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-keyboard-shortcuts" version="1.0">
+  <property name="commands" type="empty">
+    <property name="default" type="empty"/>
+    <property name="custom" type="empty">
+      <property name="&lt;Super&gt;m" type="string" value="/usr/local/bin/revenant-voice"/>
+      <property name="&lt;Primary&gt;&lt;Alt&gt;m" type="string" value="/usr/local/bin/revenant-voice"/>
+      <property name="&lt;Super&gt;v" type="string" value="/usr/local/bin/revenant-voice"/>
+    </property>
+  </property>
+</channel>
+SHORTCUTS_EOF
+
+  mkdir -p "$u_home/.config/i3"
+  if [ -f "$PATCH_ROOT/etc/i3/config" ]; then
+    cp -f "$PATCH_ROOT/etc/i3/config" "$u_home/.config/i3/config"
+  fi
+  cat << 'I3_HOTKEY' >> "$u_home/.config/i3/config"
+
+# Revenant OS Voice Assistant Hotkeys
+bindsym $mod+m exec --no-startup-id /usr/local/bin/revenant-voice
+bindsym Mod1+Control+m exec --no-startup-id /usr/local/bin/revenant-voice
+bindsym $mod+v exec --no-startup-id /usr/local/bin/revenant-voice
+I3_HOTKEY
+done
+
+mkdir -p "$PATCH_ROOT/etc/xdg/xfce4/xfconf/xfce-perchannel-xml"
+cp -f "$PATCH_ROOT/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/"*.xml "$PATCH_ROOT/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/" 2>/dev/null || true
+
+chown -R 1001:1001 "$PATCH_ROOT/home/user" 2>/dev/null || true
+chown -R 1000:1000 "$PATCH_ROOT/home/revenant" 2>/dev/null || true
+
+echo "[*] Configuring UFW firewall rules..."
+chroot "$PATCH_ROOT" ufw default deny incoming 2>/dev/null || true
+chroot "$PATCH_ROOT" ufw default allow outgoing 2>/dev/null || true
+chroot "$PATCH_ROOT" ufw allow 22/tcp 2>/dev/null || true
+chroot "$PATCH_ROOT" ufw --force enable 2>/dev/null || true
+chroot "$PATCH_ROOT" systemctl enable ufw 2>/dev/null || true
 
 echo "[*] Ensuring live environment sudoers and default passwords..."
 LIVE_HASH=$(openssl passwd -6 "revenant")
@@ -1006,8 +1179,13 @@ greeter-show-manual-login=true
 user-session=xfce
 GREETER_EOF
 
-mkdir -p /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf.d
-cat << 'GREETER_CONF_EOF' > /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf.d/01-revenant.conf
+mkdir -p /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf.d /mnt/target/usr/share/icons
+
+rm -f /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf.d/*debian*.conf 2>/dev/null || true
+rm -f /mnt/target/usr/share/lightdm/lightdm-gtk-greeter.conf.d/*debian*.conf 2>/dev/null || true
+rm -f /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf.d/01-revenant.conf 2>/dev/null || true
+
+cat << 'GREETER_CONF_EOF' > /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf.d/99_revenant.conf
 [greeter]
 background = /usr/share/backgrounds/revenant_bootsplash.png
 theme-name = Adwaita-dark
@@ -1020,15 +1198,28 @@ xft-hintstyle = slight
 xft-rgba = rgb
 indicators = ~host;~spacer;~clock;~spacer;~session;~power
 clock-format = %a, %d %b  %H:%M
-default-user-image = #avatar-default
+default-user-image = /usr/share/icons/revenant-avatar.png
+logo = /usr/share/icons/revenant-logo.png
 hide-user-image = false
 GREETER_CONF_EOF
 
-if [ -f /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf ]; then
-  sed -i -E 's/^[[:space:]]*logo[[:space:]]*=.*/#logo=/' /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf 2>/dev/null || true
-  sed -i -E 's/^[[:space:]]*background[[:space:]]*=.*/background=\/usr\/share\/backgrounds\/revenant_bootsplash.png/' /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf 2>/dev/null || true
-  sed -i -E 's/^[[:space:]]*default-user-image[[:space:]]*=.*/default-user-image=#avatar-default/' /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf 2>/dev/null || true
-fi
+cat << 'GREETER_MAIN_EOF' > /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf
+[greeter]
+background = /usr/share/backgrounds/revenant_bootsplash.png
+theme-name = Adwaita-dark
+icon-theme-name = Papirus-Dark
+cursor-theme-name = Adwaita
+font-name = Sans 10
+xft-antialias = true
+xft-dpi = 96
+xft-hintstyle = slight
+xft-rgba = rgb
+indicators = ~host;~spacer;~clock;~spacer;~session;~power
+clock-format = %a, %d %b  %H:%M
+default-user-image = /usr/share/icons/revenant-avatar.png
+logo = /usr/share/icons/revenant-logo.png
+hide-user-image = false
+GREETER_MAIN_EOF
 
 # Ensure registered session files exist for both XFCE and i3 in LightDM
 mkdir -p /mnt/target/usr/share/xsessions
@@ -1108,6 +1299,13 @@ CONFIG_RD_ZSTD=y
 CFG_EOF
 
 chroot /mnt/target update-initramfs -u -k all >> "$LOG" 2>&1 || true
+
+echo "88"; echo "# Configuring hardened firewall (UFW)..."
+chroot /mnt/target ufw default deny incoming >> "$LOG" 2>&1 || true
+chroot /mnt/target ufw default allow outgoing >> "$LOG" 2>&1 || true
+chroot /mnt/target ufw allow 22/tcp >> "$LOG" 2>&1 || true
+chroot /mnt/target ufw --force enable >> "$LOG" 2>&1 || true
+chroot /mnt/target systemctl enable ufw >> "$LOG" 2>&1 || true
 
 echo "90"; echo "# Installing GRUB bootloader..."
 grub-install --target=i386-pc --boot-directory=/mnt/target/boot --recheck "$DRIVE" >> "$LOG" 2>&1 || true
