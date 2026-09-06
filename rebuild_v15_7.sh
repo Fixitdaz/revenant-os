@@ -186,6 +186,11 @@ custom_providers:
       qwen2.5-coder-1.5b-instruct:
         context_length: 16384
 auxiliary:
+  title_generation:
+    enabled: false
+    provider: "custom"
+    model: "qwen2.5-coder-1.5b-instruct"
+    timeout: 180
   compression:
     model: "qwen2.5-coder-1.5b-instruct"
     context_length: 16384

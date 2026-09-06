@@ -89,14 +89,14 @@ if [ ! -f "$LOCAL_VERSION_FILE" ]; then
 {
   "os_name": "Revenant OS",
   "version": "1.0.0",
-  "build": "16",
+  "build": "16.1",
   "release_date": "2026-09-06"
 }
 EOF
 fi
 
 CURRENT_VER=$(grep -oP '"version":\s*"\K[^"]+' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "1.0.0")
-CURRENT_BUILD=$(grep -oP '"build":\s*"?\K[0-9]+(\.[0-9]+)?' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "16")
+CURRENT_BUILD=$(grep -oP '"build":\s*"?\K[0-9]+(\.[0-9]+)?' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "16.1")
 
 echo -e "${CYAN}[*] Current Installed Version: ${BOLD}v$CURRENT_VER (Build $CURRENT_BUILD)${RESET}"
 echo -e "${CYAN}[*] Querying remote release manifest from GitHub...${RESET}"
@@ -363,6 +363,11 @@ custom_providers:
       qwen2.5-coder-1.5b-instruct:
         context_length: 16384
 auxiliary:
+  title_generation:
+    enabled: false
+    provider: "custom"
+    model: "qwen2.5-coder-1.5b-instruct"
+    timeout: 180
   compression:
     model: "qwen2.5-coder-1.5b-instruct"
     context_length: 16384
@@ -666,8 +671,8 @@ echo -e "${GREEN}[✓] Security packages and hardware profiles synchronized.${RE
 # Update GRUB boot menu title to display current release
 if [ -f /boot/grub/grub.cfg ]; then
   echo -e "${CYAN}[*] Updating GRUB bootloader menu title...${RESET}"
-  sed -i -E 's/Revenant OS (V[0-9.]+|[0-9.]+ \(Build [0-9.]+\))/Revenant OS 1.0 (Build 16)/g' /boot/grub/grub.cfg 2>/dev/null || true
-  echo -e "${GREEN}[✓] GRUB bootloader title updated to Revenant OS 1.0 (Build 16).${RESET}"
+  sed -i -E 's/Revenant OS (V[0-9.]+|[0-9.]+ \(Build [0-9.]+\))/Revenant OS 1.0 (Build 16.1)/g' /boot/grub/grub.cfg 2>/dev/null || true
+  echo -e "${GREEN}[✓] GRUB bootloader title updated to Revenant OS 1.0 (Build 16.1).${RESET}"
 fi
 
 cat << EOF > "$LOCAL_VERSION_FILE"
