@@ -50,7 +50,7 @@ Instead of relying on mandatory cloud subscriptions, external API keys, or accou
 ### 4. 🖥️ Dual Desktop Environments: XFCE & i3
 - **De-Branded LightDM Login**: Completely de-branded login screen featuring the custom `revenant_bootsplash.png` background, Adwaita-dark theme, and the cybernetic Revenant **"R"** logo badge replacing the Debian swirl.
 - **Cyber Dark Theme & Obsidian Top Bar**: Full system dark theme (`Adwaita-dark`, `Papirus-Dark`) featuring a solid obsidian black panel (`#0b0f17`) with crisp white/cyan text and icons across the top of the screen.
-- **i3 Tiling Window Manager**: Blazing-fast, purely keyboard-driven tiling window manager configured with instant terminal launching (`Mod+Enter`), application menus (`Mod+d`), workspace switching (`Mod+1..9`), and desktop status bars.
+- **i3 Tiling Window Manager**: Blazing-fast, purely keyboard-driven tiling window manager configured with instant terminal launching (`Mod+Enter`), application menus (`Mod+d`), workspace switching (`Mod+1..9`), and desktop status bars. Read the comprehensive [**i3 Beginner's Manual**](./docs/06-I3-USER-MANUAL.md).
 - **Flexible Session Switching**:
   - **At Boot / Login**: The LightDM greeter provides an account selector and a session dropdown (top-right of screen) allowing you to choose between **Xfce Session** and **i3**.
   - **On-the-Fly Switching**: Run `switch-to-i3` or `switch-to-xfce` in any terminal to switch environments instantly without rebooting.
@@ -123,6 +123,7 @@ Explore our dedicated documentation in the [`docs/`](./docs) directory:
 - [**03: Dual Desktop Environments**](./docs/03-DESKTOP-ENVIRONMENTS.md) - Using XFCE, mastering the i3 window manager, and switching sessions.
 - [**04: Toughbook Hardware Optimization**](./docs/04-HARDWARE-OPTIMIZATION.md) - Hotkeys, battery tuning, and display drivers.
 - [**05: Over-The-Air (OTA) Updates**](./docs/05-OTA-UPDATER.md) - Updating installed systems over the air.
+- [**06: i3 Window Manager Beginner's Manual**](./docs/06-I3-USER-MANUAL.md) - Jargon-free guide, visual splitting diagrams, workflows, and complete keybinding cheat sheet.
 
 ---
 

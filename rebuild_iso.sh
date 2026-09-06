@@ -956,6 +956,97 @@ exec xfce4-session &
 XFCE_SW_EOF
 chmod +x "$PATCH_ROOT/usr/local/bin/switch-to-xfce"
 
+# Deploy i3 Quick Reference & Help script
+cat << 'I3_HELP_EOF' > "$PATCH_ROOT/usr/local/bin/revenant-i3-help"
+#!/usr/bin/env bash
+# Revenant OS i3 Quick Reference & Keyboard Cheat Sheet
+set -e
+
+SHOW_TEXT() {
+  cat << 'EOF'
+================================================================================
+           REVENANT OS - i3 WINDOW MANAGER QUICK REFERENCE
+================================================================================
+
+ The Mod Key = Windows Key (Super)
+ Located between Ctrl and Alt on your Panasonic Toughbook keyboard.
+
+--------------------------------------------------------------------------------
+ 1. THE ESSENTIAL LIFESAVERS (If you remember nothing else, remember these)
+--------------------------------------------------------------------------------
+ Mod + Enter            Open a new Terminal
+ Mod + d                Open App Launcher (dmenu) - type app name & hit Enter
+ Mod + Shift + q        Close the active window (like clicking the red X)
+ Mod + m                Activate AI Voice Assistant (microphone prompt)
+ Ctrl + Alt + m         Secondary Voice Assistant hotkey
+ Mod + F1               Open this Quick Reference guide
+ switch-to-xfce         Type in terminal to return to graphical XFCE desktop
+ Mod + Shift + e        Log out / Exit i3 (click red bar at top to confirm)
+
+--------------------------------------------------------------------------------
+ 2. MOVING AROUND (FOCUS & NAVIGATION)
+--------------------------------------------------------------------------------
+ Mod + Arrow Keys       Move focus to window (Left / Right / Up / Down)
+ Mod + j / k / l / ;    Vim-style navigation (Left / Down / Up / Right)
+ Mod + Shift + Arrows   Move / shuffle active window to a new position
+
+--------------------------------------------------------------------------------
+ 3. WINDOW SPLITTING & LAYOUTS
+--------------------------------------------------------------------------------
+ Mod + v                Vertical Split (next window opens BELOW current window)
+ Mod + h                Horizontal Split (next window opens BESIDE current window)
+ Mod + f                Toggle Fullscreen mode on / off
+ Mod + w                Tabbed Layout (windows become tabs across the top)
+ Mod + s                Stacked Layout (windows stack vertically)
+ Mod + e                Default Split Layout (return to normal tiling)
+ Mod + Shift + Space    Toggle Floating mode (makes window draggable)
+ Mod + Left-Click Drag  Move a floating window with mouse
+ Mod + Right-Click Drag Resize a floating window with mouse
+
+--------------------------------------------------------------------------------
+ 4. WORKSPACES (10 CLEAN VIRTUAL DESKTOPS)
+--------------------------------------------------------------------------------
+ Mod + [1 .. 9]         Jump to Workspace 1 through 9
+ Mod + Shift + [1 .. 9] Send current window to Workspace 1 through 9
+
+--------------------------------------------------------------------------------
+ 5. RESIZING WINDOWS
+--------------------------------------------------------------------------------
+ 1. Press Mod + r (the bar displays [resize]).
+ 2. Press Arrow Keys to shrink or expand the window.
+ 3. Press Enter or Escape to lock in the size and exit resize mode.
+
+================================================================================
+ Full beginner guide with diagrams: /usr/local/share/doc/revenant-os/06-I3-USER-MANUAL.md
+ Online Wiki: https://github.com/Fixitdaz/revenant-os/blob/main/docs/06-I3-USER-MANUAL.md
+================================================================================
+EOF
+}
+
+if [ "$1" = "--cli" ] || [ -t 1 ]; then
+  if command -v less >/dev/null 2>&1; then
+    SHOW_TEXT | less -R
+  else
+    SHOW_TEXT
+  fi
+else
+  if command -v xfce4-terminal >/dev/null 2>&1; then
+    xfce4-terminal --title="i3 Window Manager Quick Reference (Press Q to exit)" --geometry=88x32 -e "$0 --cli"
+  elif command -v zenity >/dev/null 2>&1; then
+    SHOW_TEXT | zenity --text-info --title="i3 Window Manager Quick Reference" --width=720 --height=580 --font="Monospace 10" 2>/dev/null || true
+  else
+    SHOW_TEXT
+  fi
+fi
+I3_HELP_EOF
+chmod +x "$PATCH_ROOT/usr/local/bin/revenant-i3-help"
+ln -sf /usr/local/bin/revenant-i3-help "$PATCH_ROOT/usr/local/bin/i3-help"
+
+mkdir -p "$PATCH_ROOT/usr/local/share/doc/revenant-os"
+if [ -f "$REPO_ROOT/docs/06-I3-USER-MANUAL.md" ]; then
+  cp -f "$REPO_ROOT/docs/06-I3-USER-MANUAL.md" "$PATCH_ROOT/usr/local/share/doc/revenant-os/" 2>/dev/null || true
+fi
+
 mkdir -p "$PATCH_ROOT/usr/share/applications"
 cat << 'DESK_I3_EOF' > "$PATCH_ROOT/usr/share/applications/switch-to-i3.desktop"
 [Desktop Entry]
@@ -1086,12 +1177,15 @@ SHORTCUTS_EOF
     cp -f "$PATCH_ROOT/etc/i3/config" "$u_home/.config/i3/config"
   fi
   sed -i '/revenant-voice/d' "$u_home/.config/i3/config" 2>/dev/null || true
+  sed -i '/revenant-i3-help/d' "$u_home/.config/i3/config" 2>/dev/null || true
   sed -i '/Revenant OS Voice Assistant Hotkeys/d' "$u_home/.config/i3/config" 2>/dev/null || true
+  sed -i '/Revenant OS Hotkeys & Quick Reference/d' "$u_home/.config/i3/config" 2>/dev/null || true
   cat << 'I3_HOTKEY' >> "$u_home/.config/i3/config"
 
-# Revenant OS Voice Assistant Hotkeys
+# Revenant OS Hotkeys & Quick Reference
 bindsym $mod+m exec --no-startup-id /usr/local/bin/revenant-voice
 bindsym Mod1+Control+m exec --no-startup-id /usr/local/bin/revenant-voice
+bindsym $mod+F1 exec --no-startup-id /usr/local/bin/revenant-i3-help
 I3_HOTKEY
 done
 
@@ -1309,16 +1403,19 @@ for ddir in /mnt/target/root/Desktop /mnt/target/home/*/Desktop; do
 done
 chroot /mnt/target chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/Desktop" 2>/dev/null || true
 
-# Sanitize i3 configuration on target system to eliminate duplicate keybindings
+# Sanitize i3 configuration on target system to eliminate duplicate keybindings & add help hotkey
 for i3_cfg in /mnt/target/etc/i3/config /mnt/target/etc/skel/.config/i3/config /mnt/target/home/*/.config/i3/config /mnt/target/root/.config/i3/config; do
   if [ -f "$i3_cfg" ]; then
     sed -i '/revenant-voice/d' "$i3_cfg" 2>/dev/null || true
+    sed -i '/revenant-i3-help/d' "$i3_cfg" 2>/dev/null || true
     sed -i '/Revenant OS Voice Assistant Hotkeys/d' "$i3_cfg" 2>/dev/null || true
+    sed -i '/Revenant OS Hotkeys & Quick Reference/d' "$i3_cfg" 2>/dev/null || true
     cat << 'I3_HOTKEY' >> "$i3_cfg"
 
-# Revenant OS Voice Assistant Hotkeys
+# Revenant OS Hotkeys & Quick Reference
 bindsym $mod+m exec --no-startup-id /usr/local/bin/revenant-voice
 bindsym Mod1+Control+m exec --no-startup-id /usr/local/bin/revenant-voice
+bindsym $mod+F1 exec --no-startup-id /usr/local/bin/revenant-i3-help
 I3_HOTKEY
   fi
 done

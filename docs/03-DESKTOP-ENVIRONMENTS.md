@@ -33,6 +33,8 @@ You do not need to reboot to switch between XFCE and i3:
 
 ## i3 Window Manager Cheat Sheet
 
+> 📖 **Comprehensive Manual**: For a full beginner's tutorial with visual diagrams and jargon-free explanations, see the [i3 User Manual](06-I3-USER-MANUAL.md).
+
 ### Essential Hotkeys
 - **Mod Key**: `Windows Key` (Super)
 - **Open Terminal**: `Mod + Enter`
