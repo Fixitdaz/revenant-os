@@ -93,7 +93,16 @@ Instead of relying on mandatory cloud subscriptions, external API keys, or accou
 ## 🚀 Installation & Quick Start
 
 1. **Download the ISO**:
-   - **Stable Release**: [`revenant_os_1.1_build18.3.iso`](https://github.com/Fixitdaz/revenant-os/releases) (Official release image)
+   - Download [`revenant_os_1.1_build18.3.iso.001`](https://github.com/Fixitdaz/revenant-os/releases) and [`revenant_os_1.1_build18.3.iso.002`](https://github.com/Fixitdaz/revenant-os/releases) from [GitHub Releases](https://github.com/Fixitdaz/revenant-os/releases).
+   - Recombine the two files:
+     - **Windows (Command Prompt / PowerShell)**:
+       ```cmd
+       copy /b revenant_os_1.1_build18.3.iso.001 + revenant_os_1.1_build18.3.iso.002 revenant_os_1.1_build18.3.iso
+       ```
+     - **Linux / macOS**:
+       ```bash
+       cat revenant_os_1.1_build18.3.iso.001 revenant_os_1.1_build18.3.iso.002 > revenant_os_1.1_build18.3.iso
+       ```
 2. **Flash to USB**:
    - **Windows**: Use [Rufus](https://rufus.ie/) in *DD Mode* or [BalenaEtcher](https://etcher.balena.io/).
    - **Linux / macOS**:
