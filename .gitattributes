@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.sh text eol=lf
+tools/* text eol=lf
+*.png binary
+*.jpg binary
+*.iso binary
+*.deb binary

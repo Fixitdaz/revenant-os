@@ -7,10 +7,10 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_DIR="/var/tmp/toughbook_rebuild_1_0"
-PATCH_ROOT="/var/tmp/patch_root_1_0"
+WORKSPACE_DIR="/var/tmp/toughbook_rebuild_1_1"
+PATCH_ROOT="/var/tmp/patch_root_1_1"
 ISO_SOURCE="$SCRIPT_DIR/revenant_os_toughbook_v15_5.iso"
-ISO_TARGET="$SCRIPT_DIR/revenant_os_1.0_build17.iso"
+ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build18.3.iso"
 ISO_ALIAS="$SCRIPT_DIR/revenant_os_latest.iso"
 CACHE_DIR="/var/tmp/revenant_cache"
 
@@ -23,7 +23,7 @@ umount "$PATCH_ROOT/dev" 2>/dev/null || true
 rm -rf "$WORKSPACE_DIR" "$PATCH_ROOT"
 mkdir -p "$CACHE_DIR"
 
-echo "[*] Mounting V15.4 source ISO..."
+echo "[*] Mounting source ISO..."
 mkdir -p /mnt/iso
 mount -o loop,ro "$ISO_SOURCE" /mnt/iso
 
@@ -34,7 +34,9 @@ echo "[*] Setting up ISO base image tree..."
 mkdir -p "$WORKSPACE_DIR/image/live" "$WORKSPACE_DIR/image/boot/grub"
 cp /mnt/iso/live/vmlinuz "$WORKSPACE_DIR/image/live/vmlinuz"
 cp /mnt/iso/live/initrd.img "$WORKSPACE_DIR/image/live/initrd.img"
-if [ -f /mnt/iso/boot/grub/splash.png ]; then
+if [ -f "$SCRIPT_DIR/revenant_bootsplash.png" ]; then
+  cp "$SCRIPT_DIR/revenant_bootsplash.png" "$WORKSPACE_DIR/image/boot/grub/splash.png"
+elif [ -f /mnt/iso/boot/grub/splash.png ]; then
   cp /mnt/iso/boot/grub/splash.png "$WORKSPACE_DIR/image/boot/grub/splash.png"
 fi
 
@@ -56,6 +58,9 @@ chroot "$PATCH_ROOT" apt-get install -y --no-install-recommends \
   brightnessctl \
   xinput-calibrator \
   libasound2 \
+  alsa-utils \
+  wmctrl \
+  xdotool \
   libnss3 \
   libatk1.0-0 \
   libatk-bridge2.0-0 \
@@ -67,7 +72,8 @@ chroot "$PATCH_ROOT" apt-get install -y --no-install-recommends \
   i3 \
   i3status \
   dmenu \
-  feh
+  feh \
+  ufw
 
 # Install Bitwarden Desktop deb
 if [ -f "$CACHE_DIR/Bitwarden-amd64.deb" ]; then
@@ -163,23 +169,128 @@ CONFIG_RD_LZ4=y
 CONFIG_RD_ZSTD=y
 CFG_EOF
 
-echo "[*] Purging legacy services and deploying Revenant Custom Agent..."
+echo "[*] Purging legacy services and background agents..."
+rm -f "$PATCH_ROOT/etc/systemd/system/omniroute.service"
+rm -f "$PATCH_ROOT/usr/local/bin/omniroute" "$PATCH_ROOT/usr/bin/omniroute"
 rm -f "$PATCH_ROOT/usr/local/bin/hermes" "$PATCH_ROOT/usr/bin/hermes"
-rm -rf "$PATCH_ROOT/usr/lib/node_modules/hermes-agent"
+rm -rf "$PATCH_ROOT/usr/lib/node_modules/hermes-agent" "$PATCH_ROOT/usr/lib/node_modules/omniroute"
 for target_dir in "$PATCH_ROOT/root/.hermes" "$PATCH_ROOT/etc/skel/.hermes" "$PATCH_ROOT/home/user/.hermes" "$PATCH_ROOT/home/revenant/.hermes"; do
   rm -rf "$target_dir"
 done
+
+echo "[*] Configuring LightDM login screen branding & de-branding Debian..."
+mkdir -p "$PATCH_ROOT/usr/share/backgrounds" "$PATCH_ROOT/usr/share/images/desktop-base" "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf.d" "$PATCH_ROOT/usr/share/icons"
+
+# Purge any Debian greeter config overrides
+rm -f "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf.d/"*debian*.conf 2>/dev/null || true
+rm -f "$PATCH_ROOT/usr/share/lightdm/lightdm-gtk-greeter.conf.d/"*debian*.conf 2>/dev/null || true
+rm -f "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf.d/01-revenant.conf" 2>/dev/null || true
+
+if [ -f "$SCRIPT_DIR/revenant_bootsplash.png" ]; then
+  cp -f "$SCRIPT_DIR/revenant_bootsplash.png" "$PATCH_ROOT/usr/share/backgrounds/revenant_bootsplash.png"
+  cp -f "$SCRIPT_DIR/revenant_bootsplash.png" "$PATCH_ROOT/usr/share/images/desktop-base/desktop-background"
+  cp -f "$SCRIPT_DIR/revenant_bootsplash.png" "$PATCH_ROOT/usr/share/images/desktop-base/login-background.svg"
+  cp -f "$SCRIPT_DIR/revenant_bootsplash.png" "$PATCH_ROOT/boot/grub/splash.png" 2>/dev/null || true
+fi
+if [ -f "$SCRIPT_DIR/revenant_wallpaper.jpg" ]; then
+  cp -f "$SCRIPT_DIR/revenant_wallpaper.jpg" "$PATCH_ROOT/usr/share/backgrounds/revenant_wallpaper.jpg"
+fi
+if [ -f "$SCRIPT_DIR/revenant_logo.png" ]; then
+  cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/usr/share/icons/revenant-logo.png"
+  cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/usr/share/icons/revenant-avatar.png"
+
+  # Completely overwrite Debian default avatars and all user account avatars with Revenant 'R' badge
+  for av_dest in "$PATCH_ROOT/usr/share/images/desktop-base/avatar.png" "$PATCH_ROOT/usr/share/icons/desktop-base/avatar.png" \
+                 "$PATCH_ROOT/usr/share/images/desktop-base/avatar.svg" "$PATCH_ROOT/usr/share/icons/desktop-base/avatar.svg"; do
+    cp -f "$SCRIPT_DIR/revenant_logo.png" "$av_dest" 2>/dev/null || true
+  done
+
+  # Overwrite default skel and root avatars
+  cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/etc/skel/.face" 2>/dev/null || true
+  cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/etc/skel/.face.icon" 2>/dev/null || true
+  cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/root/.face" 2>/dev/null || true
+  cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/root/.face.icon" 2>/dev/null || true
+
+  # Overwrite all existing user avatars in /home/*
+  for uhome in "$PATCH_ROOT/home"/*; do
+    if [ -d "$uhome" ]; then
+      cp -f "$SCRIPT_DIR/revenant_logo.png" "$uhome/.face" 2>/dev/null || true
+      cp -f "$SCRIPT_DIR/revenant_logo.png" "$uhome/.face.icon" 2>/dev/null || true
+    fi
+  done
+
+  # Overwrite AccountsService avatar cache
+  if [ -d "$PATCH_ROOT/var/lib/AccountsService/icons" ]; then
+    for icon_file in "$PATCH_ROOT/var/lib/AccountsService/icons"/*; do
+      if [ -f "$icon_file" ]; then
+        cp -f "$SCRIPT_DIR/revenant_logo.png" "$icon_file" 2>/dev/null || true
+      fi
+    done
+  fi
+fi
+
+# Neutralize vendor Debian logo icons with the Revenant badge
+for deb_icon in "$PATCH_ROOT/usr/share/icons/desktop-base/debian.svg" \
+               "$PATCH_ROOT/usr/share/icons/desktop-base/debian-logo.svg" \
+               "$PATCH_ROOT/usr/share/icons/desktop-base/"*debian*.svg \
+               "$PATCH_ROOT/usr/share/icons/desktop-base/"*debian*.png \
+               "$PATCH_ROOT/usr/share/icons/hicolor/scalable/apps/debian-logo.svg" \
+               "$PATCH_ROOT/usr/share/icons/hicolor/"*/apps/debian*.png \
+               "$PATCH_ROOT/usr/share/icons/hicolor/"*/apps/debian*.svg; do
+  if [ -f "$deb_icon" ] && [ -f "$SCRIPT_DIR/revenant_logo.png" ]; then
+    cp -f "$SCRIPT_DIR/revenant_logo.png" "$deb_icon" 2>/dev/null || true
+  fi
+done
+
+cat << 'GREETER_CONF_EOF' > "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf.d/99_revenant.conf"
+[greeter]
+background = /usr/share/backgrounds/revenant_bootsplash.png
+theme-name = Adwaita-dark
+icon-theme-name = Papirus-Dark
+cursor-theme-name = Adwaita
+font-name = Sans 10
+xft-antialias = true
+xft-dpi = 96
+xft-hintstyle = slight
+xft-rgba = rgb
+indicators = ~host;~spacer;~clock;~spacer;~session;~power
+clock-format = %a, %d %b  %H:%M
+default-user-image = /usr/share/icons/revenant-avatar.png
+logo = /usr/share/icons/revenant-logo.png
+hide-user-image = false
+GREETER_CONF_EOF
+
+cat << 'GREETER_MAIN_EOF' > "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf"
+[greeter]
+background = /usr/share/backgrounds/revenant_bootsplash.png
+theme-name = Adwaita-dark
+icon-theme-name = Papirus-Dark
+cursor-theme-name = Adwaita
+font-name = Sans 10
+xft-antialias = true
+xft-dpi = 96
+xft-hintstyle = slight
+xft-rgba = rgb
+indicators = ~host;~spacer;~clock;~spacer;~session;~power
+clock-format = %a, %d %b  %H:%M
+default-user-image = /usr/share/icons/revenant-avatar.png
+logo = /usr/share/icons/revenant-logo.png
+hide-user-image = false
+GREETER_MAIN_EOF
+
+echo "[*] Setting up Whisper STT and deploying voice-enabled Revenant Custom Agent..."
+mkdir -p "$PATCH_ROOT/opt/whisper/models"
 
 cat << 'AGENT_EOF' > "$PATCH_ROOT/usr/local/bin/revenant-agent"
 #!/usr/bin/env python3
 # ==============================================================================
 # Revenant OS - Native Autonomous Agent Core (CPU-Optimized for Panasonic Toughbook)
 # ==============================================================================
-import sys, os, json, re, urllib.request, subprocess, glob, time
+import sys, os, json, re, urllib.request, subprocess, glob, time, signal, atexit
 try:
     import readline
 except ImportError:
-    pass
+    readline = None
 
 CYAN = "\033[96m"
 GREEN = "\033[92m"
@@ -197,7 +308,58 @@ You can inspect the system and run actions using these commands:
 - [WRITE: filepath | content] to create or update files
 Keep explanations brief. Provide the command needed to solve the user's task."""
 
+PID_FILE = "/tmp/revenant_agent.pid"
 VOICE_ENABLED = False
+mic_requested = False
+
+def cleanup_pid():
+    try:
+        if os.path.exists(PID_FILE):
+            with open(PID_FILE, 'r') as f:
+                if f.read().strip() == str(os.getpid()):
+                    os.remove(PID_FILE)
+    except Exception:
+        pass
+
+atexit.register(cleanup_pid)
+try:
+    with open(PID_FILE, 'w') as f:
+        f.write(str(os.getpid()))
+except Exception:
+    pass
+
+class VoiceTrigger(Exception):
+    pass
+
+def handle_voice_signal(signum, frame):
+    global mic_requested
+    mic_requested = True
+    raise VoiceTrigger()
+
+try:
+    signal.signal(signal.SIGUSR1, handle_voice_signal)
+    signal.siginterrupt(signal.SIGUSR1, True)
+except Exception:
+    pass
+
+def set_input_buffer(text):
+    """Prefill the interactive readline prompt so user can review/edit and hit Enter."""
+    if not text or not readline:
+        return
+    def pre_hook():
+        try:
+            readline.insert_text(text)
+            readline.redisplay()
+        except Exception:
+            pass
+        try:
+            readline.set_pre_input_hook(None)
+        except Exception:
+            pass
+    try:
+        readline.set_pre_input_hook(pre_hook)
+    except Exception:
+        pass
 
 def speak_text(text):
     if not VOICE_ENABLED:
@@ -208,9 +370,100 @@ def speak_text(text):
         cmd = f"echo '{clean}' | /opt/piper/piper -m /opt/piper/models/en_US-lessac-medium.onnx --output_raw 2>/dev/null | aplay -r 22050 -f S16_LE -t raw - 2>/dev/null"
         subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+def configure_microphone():
+    """Unmute and boost Panasonic Toughbook CF-52 microphone capture channels."""
+    controls = [
+        "amixer -q set Capture 95% unmute",
+        "amixer -q set 'Capture',0 95% unmute",
+        "amixer -q set 'Internal Mic' 95% unmute",
+        "amixer -q set 'Mic' 95% unmute",
+        "amixer -q set 'Front Mic' 95% unmute",
+        "amixer -q set 'Mic Boost' 2 unmute",
+        "amixer -q set 'Capture Boost' 2 unmute",
+        "amixer -q set 'Input Source' 'Internal Mic' || amixer -q set 'Input Source' 'Mic'",
+        "amixer -q sset 'Capture' cap",
+        "amixer -q sset 'Internal Mic' cap"
+    ]
+    for cmd in controls:
+        subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+def record_voice(duration=5, output_wav="/tmp/revenant_voice.wav"):
+    """Record audio from Toughbook microphone using arecord (16kHz 16-bit mono for Whisper)."""
+    configure_microphone()
+    try:
+        if os.path.exists(output_wav):
+            try:
+                os.remove(output_wav)
+            except Exception:
+                pass
+        print(f"\n{YELLOW}🎙️  [Listening... Speak into microphone ({duration}s)...]{RESET}")
+
+        # Primary attempt: default ALSA / Pulse / Pipewire
+        cmd = f"arecord -q -d {duration} -r 16000 -c 1 -f S16_LE '{output_wav}'"
+        res = subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # Fallback 1: plughw:0,0
+        if res.returncode != 0 or not os.path.exists(output_wav) or os.path.getsize(output_wav) < 1000:
+            cmd = f"arecord -q -D plughw:0,0 -d {duration} -r 16000 -c 1 -f S16_LE '{output_wav}'"
+            res = subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # Fallback 2: stereo capture with downmix
+        if res.returncode != 0 or not os.path.exists(output_wav) or os.path.getsize(output_wav) < 1000:
+            cmd = f"arecord -q -d {duration} -r 16000 -c 2 -f S16_LE /tmp/revenant_stereo.wav && (ffmpeg -y -i /tmp/revenant_stereo.wav -ac 1 '{output_wav}' 2>/dev/null || cp /tmp/revenant_stereo.wav '{output_wav}')"
+            subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        return os.path.exists(output_wav) and os.path.getsize(output_wav) > 1000
+    except Exception as e:
+        print(f"{RED}[!] Audio record error: {e}{RESET}")
+        return False
+
+def transcribe_voice(wav_path="/tmp/revenant_voice.wav"):
+    """Transcribe audio locally using whisper.cpp (ggml-tiny.en)."""
+    if not os.path.exists(wav_path):
+        return ""
+    whisper_bin = "/opt/whisper/whisper-cli"
+    model_path = "/opt/whisper/models/ggml-tiny.en.bin"
+
+    print(f"{CYAN}⚡ [Transcribing voice with local Whisper STT...]{RESET}")
+    if os.path.exists(whisper_bin) and os.path.exists(model_path):
+        try:
+            proc = subprocess.run(
+                [whisper_bin, "-m", model_path, "-f", wav_path, "--no-timestamps", "-nt"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30
+            )
+            raw = proc.stdout.strip()
+            clean = re.sub(r'\[.*?\]', '', raw).strip()
+            return clean
+        except Exception as e:
+            print(f"{RED}[!] Whisper error: {e}{RESET}")
+
+    try:
+        from pywhispercpp.model import Model
+        m = Model('tiny.en', models_dir='/opt/whisper/models')
+        segs = m.transcribe(wav_path)
+        return " ".join([s.text for s in segs]).strip()
+    except Exception:
+        pass
+
+    print(f"{YELLOW}[!] Whisper STT not ready. Run 'sudo revenant-update' to install.{RESET}")
+    return ""
+
+def handle_mic_input():
+    if record_voice(duration=5):
+        transcript = transcribe_voice()
+        if transcript:
+            print(f"{GREEN}✓ Speech recognized:{RESET} {BOLD}\"{transcript}\"{RESET}")
+            print(f"{DIM}(Review or edit prompt below, then hit Enter to execute){RESET}\n")
+            set_input_buffer(transcript)
+            return transcript
+        else:
+            print(f"{YELLOW}[No speech detected or transcription empty]{RESET}\n")
+    else:
+        print(f"{RED}[!] Could not capture audio from microphone. Check connections.{RESET}\n")
+    return ""
+
 def get_system_telemetry():
     telemetry = []
-    # Battery
     bats = glob.glob('/sys/class/power_supply/BAT*/capacity')
     if bats:
         try:
@@ -219,7 +472,6 @@ def get_system_telemetry():
             telemetry.append(f"Battery: {cap}%")
         except Exception:
             pass
-    # Temp
     temps = glob.glob('/sys/class/thermal/thermal_zone*/temp')
     if temps:
         try:
@@ -228,7 +480,6 @@ def get_system_telemetry():
             telemetry.append(f"Temp: {t:.1f}°C")
         except Exception:
             pass
-    # RAM
     try:
         out = subprocess.check_output("free -m | awk '/Mem:/ {print $3\"/\"$2\"MB\"}'", shell=True).decode().strip()
         telemetry.append(f"RAM: {out}")
@@ -325,8 +576,8 @@ def call_local_model(messages, max_tokens=384):
     print()
     return "".join(collected)
 
-def run_agent_loop():
-    global VOICE_ENABLED
+def run_agent_loop(initial_prompt=None, initial_mic=False):
+    global VOICE_ENABLED, mic_requested
     os.system('clear')
     print(f"{CYAN}{BOLD}=========================================================={RESET}")
     print(f"{CYAN}{BOLD}        REVENANT OS - AUTONOMOUS FIELD AGENT CORE         {RESET}")
@@ -334,18 +585,40 @@ def run_agent_loop():
     telem = get_system_telemetry()
     if telem:
         print(f"{DIM}{telem}{RESET}")
-    print(f"{DIM}Commands: /clear (reset memory) | /voice (toggle speech) | /sys | exit{RESET}\n")
+    print(f"{DIM}Commands: /mic (voice input) | /voice (toggle speech) | /sys | /clear | exit{RESET}")
+    print(f"{CYAN}Hotkeys:  Press <Super>+M anytime to speak directly into this window.{RESET}\n")
 
     history = [
         {"role": "system", "content": SYSTEM_PROMPT}
     ]
 
+    pending_user_input = initial_prompt
+
+    if initial_mic:
+        handle_mic_input()
+
     while True:
-        try:
-            user_input = input(f"{GREEN}{BOLD}revenant ❯ {RESET}").strip()
-        except (KeyboardInterrupt, EOFError):
-            print(f"\n{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
-            break
+        if mic_requested:
+            mic_requested = False
+            handle_mic_input()
+
+        if pending_user_input:
+            user_input = pending_user_input
+            pending_user_input = None
+        else:
+            try:
+                user_input = input(f"{GREEN}{BOLD}revenant ❯ {RESET}").strip()
+            except (VoiceTrigger, InterruptedError):
+                mic_requested = False
+                handle_mic_input()
+                continue
+            except (KeyboardInterrupt, EOFError):
+                if mic_requested:
+                    mic_requested = False
+                    handle_mic_input()
+                    continue
+                print(f"\n{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
+                break
 
         if not user_input:
             continue
@@ -353,6 +626,9 @@ def run_agent_loop():
         if user_input.lower() in ('exit', 'quit', ':q'):
             print(f"{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
             break
+        elif user_input.lower() in ('/mic', '/talk', '/listen'):
+            handle_mic_input()
+            continue
         elif user_input == '/clear':
             history = [{"role": "system", "content": SYSTEM_PROMPT}]
             print(f"{GREEN}[✓] Conversation memory cleared.{RESET}\n")
@@ -370,7 +646,6 @@ def run_agent_loop():
 
         history.append({"role": "user", "content": user_input})
 
-        # Compact history if it exceeds 10 turns to keep prompt processing instant
         if len(history) > 10:
             history = [history[0]] + history[-8:]
 
@@ -380,11 +655,9 @@ def run_agent_loop():
             history.append({"role": "assistant", "content": response})
             speak_text(response)
 
-            # Tool extraction loop
             tool_matches = re.findall(r'\[(EXEC|READ|WRITE):\s*(.*?)\]', response, re.DOTALL)
             for action_type, payload in tool_matches:
                 result = execute_tool(action_type, payload)
-                # Feed tool result back to agent
                 history.append({"role": "user", "content": f"Tool execution result:\n{result}"})
                 print(f"\n{CYAN}[Revenant Agent Analyzing Result...]{RESET}")
                 followup = call_local_model(history, max_tokens=256)
@@ -400,7 +673,15 @@ def run_agent_loop():
             print(f"\n{RED}[!] Agent Error: {e}{RESET}\n")
 
 if __name__ == '__main__':
-    run_agent_loop()
+    initial = None
+    start_mic = False
+    if len(sys.argv) > 1:
+        if sys.argv[1] in ('--mic', '-m', '--voice'):
+            VOICE_ENABLED = True
+            start_mic = True
+        else:
+            initial = " ".join(sys.argv[1:])
+    run_agent_loop(initial_prompt=initial, initial_mic=start_mic)
 AGENT_EOF
 chmod +x "$PATCH_ROOT/usr/local/bin/revenant-agent"
 
@@ -418,19 +699,38 @@ INTERP_CFG
 done
 chown -R 1001:1001 "$PATCH_ROOT/home/user/.config" 2>/dev/null || true
 chown -R 1000:1000 "$PATCH_ROOT/home/revenant/.config" 2>/dev/null || true
-echo "[*] Installing streaming /usr/local/bin/ai CLI (real-time tokens, no timeout)..."
+
+echo "[*] Installing streaming /usr/local/bin/ai CLI with voice input support..."
 cat << 'PYEOF' > "$PATCH_ROOT/usr/local/bin/ai"
 #!/usr/bin/env python3
-import sys, json, urllib.request, subprocess
+import sys, os, json, urllib.request, subprocess, re
 
 if len(sys.argv) < 2:
     if os.path.exists("/usr/local/bin/revenant-agent"):
         os.execv("/usr/local/bin/revenant-agent", ["revenant-agent"])
     print("\033[93mUsage: ai <your question or command>\033[0m")
+    print("       ai --mic (voice input via microphone)")
     print("Runs 100% locally via Qwen2.5-Coder on llama-server (port 8080).")
     sys.exit(1)
 
-prompt = " ".join(sys.argv[1:])
+prompt = ""
+if sys.argv[1] in ("--mic", "-m", "--voice"):
+    print("\033[93m🎙️  [Listening... Speak your query into the microphone (5s)...]\033[0m")
+    wav = "/tmp/revenant_ai_voice.wav"
+    subprocess.run(f"arecord -q -d 5 -r 16000 -c 1 -f S16_LE '{wav}'", shell=True)
+    whisper_bin = "/opt/whisper/whisper-cli"
+    model = "/opt/whisper/models/ggml-tiny.en.bin"
+    if os.path.exists(whisper_bin) and os.path.exists(model):
+        proc = subprocess.run([whisper_bin, "-m", model, "-f", wav, "--no-timestamps", "-nt"], stdout=subprocess.PIPE, text=True)
+        raw = proc.stdout.strip()
+        prompt = re.sub(r'\[.*?\]', '', raw).strip()
+    if not prompt:
+        print("\033[91m[!] No speech detected or Whisper not ready.\033[0m")
+        sys.exit(1)
+    print(f"\033[92m\033[1mVoice Query:\033[0m {prompt}\n")
+else:
+    prompt = " ".join(sys.argv[1:])
+
 print("\033[96m[Revenant Core: Local Qwen2.5 Thinking (Offline Toughbook CPU)...]\033[0m\n")
 
 payload = json.dumps({
@@ -556,7 +856,40 @@ revenant-agent
 STARTEOF
 chmod +x "$PATCH_ROOT/usr/local/bin/revenant-services"
 
-# Create Desktop launcher
+# Deploy instant Voice Assistant helper script
+cat << 'VOICE_EOF' > "$PATCH_ROOT/usr/local/bin/revenant-voice"
+#!/bin/bash
+# ==============================================================================
+# Revenant Voice Assistant Single-Window Coordinator (Super+M / Ctrl+Alt+M)
+# ==============================================================================
+
+PID=""
+if [ -f /tmp/revenant_agent.pid ]; then
+  CANDIDATE=$(cat /tmp/revenant_agent.pid 2>/dev/null)
+  if [ -n "$CANDIDATE" ] && kill -0 "$CANDIDATE" 2>/dev/null; then
+    PID="$CANDIDATE"
+  fi
+fi
+
+if [ -z "$PID" ]; then
+  PID=$(pgrep -f "/usr/local/bin/revenant-agent" | head -n 1)
+fi
+
+if [ -n "$PID" ]; then
+  # Agent already running: bring existing window to front & trigger microphone directly
+  wmctrl -a "Revenant Field Agent" 2>/dev/null || \
+  wmctrl -a "Revenant" 2>/dev/null || \
+  xdotool search --name "Revenant" windowactivate 2>/dev/null || true
+
+  kill -USR1 "$PID" 2>/dev/null || true
+else
+  # Agent not running: launch exactly ONE terminal window with microphone active
+  exec xfce4-terminal --title="Revenant Field Agent" --geometry=100x30 -e "/usr/local/bin/revenant-agent --mic"
+fi
+VOICE_EOF
+chmod +x "$PATCH_ROOT/usr/local/bin/revenant-voice"
+
+# Create Desktop launchers
 for ddir in "$PATCH_ROOT/etc/skel/Desktop" "$PATCH_ROOT/home/user/Desktop" "$PATCH_ROOT/home/revenant/Desktop"; do
   mkdir -p "$ddir"
   cat << 'DESKEOF' > "$ddir/Start_AI_Engine.desktop"
@@ -586,6 +919,20 @@ StartupNotify=true
 Categories=System;Utility;Development;
 AGENTDESK_EOF
   chmod +x "$ddir/Revenant_Agent.desktop"
+
+  cat << 'VOICEDESK_EOF' > "$ddir/Revenant_Voice.desktop"
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Revenant Voice Assistant (Super+M)
+Comment=Talk directly to Revenant Agent using local Whisper STT & Piper TTS
+Exec=/usr/local/bin/revenant-voice
+Icon=audio-input-microphone
+Terminal=false
+StartupNotify=true
+Categories=AudioVideo;Utility;
+VOICEDESK_EOF
+  chmod +x "$ddir/Revenant_Voice.desktop"
 done
 
 # Create switch-to-i3 and switch-to-xfce utilities
@@ -608,6 +955,97 @@ pkill -9 i3 2>/dev/null || true
 exec xfce4-session &
 XFCE_SW_EOF
 chmod +x "$PATCH_ROOT/usr/local/bin/switch-to-xfce"
+
+# Deploy i3 Quick Reference & Help script
+cat << 'I3_HELP_EOF' > "$PATCH_ROOT/usr/local/bin/revenant-i3-help"
+#!/usr/bin/env bash
+# Revenant OS i3 Quick Reference & Keyboard Cheat Sheet
+set -e
+
+SHOW_TEXT() {
+  cat << 'EOF'
+================================================================================
+           REVENANT OS - i3 WINDOW MANAGER QUICK REFERENCE
+================================================================================
+
+ The Mod Key = Windows Key (Super)
+ Located between Ctrl and Alt on your Panasonic Toughbook keyboard.
+
+--------------------------------------------------------------------------------
+ 1. THE ESSENTIAL LIFESAVERS (If you remember nothing else, remember these)
+--------------------------------------------------------------------------------
+ Mod + Enter            Open a new Terminal
+ Mod + d                Open App Launcher (dmenu) - type app name & hit Enter
+ Mod + Shift + q        Close the active window (like clicking the red X)
+ Mod + m                Activate AI Voice Assistant (microphone prompt)
+ Ctrl + Alt + m         Secondary Voice Assistant hotkey
+ Mod + F1               Open this Quick Reference guide
+ switch-to-xfce         Type in terminal to return to graphical XFCE desktop
+ Mod + Shift + e        Log out / Exit i3 (click red bar at top to confirm)
+
+--------------------------------------------------------------------------------
+ 2. MOVING AROUND (FOCUS & NAVIGATION)
+--------------------------------------------------------------------------------
+ Mod + Arrow Keys       Move focus to window (Left / Right / Up / Down)
+ Mod + j / k / l / ;    Vim-style navigation (Left / Down / Up / Right)
+ Mod + Shift + Arrows   Move / shuffle active window to a new position
+
+--------------------------------------------------------------------------------
+ 3. WINDOW SPLITTING & LAYOUTS
+--------------------------------------------------------------------------------
+ Mod + v                Vertical Split (next window opens BELOW current window)
+ Mod + h                Horizontal Split (next window opens BESIDE current window)
+ Mod + f                Toggle Fullscreen mode on / off
+ Mod + w                Tabbed Layout (windows become tabs across the top)
+ Mod + s                Stacked Layout (windows stack vertically)
+ Mod + e                Default Split Layout (return to normal tiling)
+ Mod + Shift + Space    Toggle Floating mode (makes window draggable)
+ Mod + Left-Click Drag  Move a floating window with mouse
+ Mod + Right-Click Drag Resize a floating window with mouse
+
+--------------------------------------------------------------------------------
+ 4. WORKSPACES (10 CLEAN VIRTUAL DESKTOPS)
+--------------------------------------------------------------------------------
+ Mod + [1 .. 9]         Jump to Workspace 1 through 9
+ Mod + Shift + [1 .. 9] Send current window to Workspace 1 through 9
+
+--------------------------------------------------------------------------------
+ 5. RESIZING WINDOWS
+--------------------------------------------------------------------------------
+ 1. Press Mod + r (the bar displays [resize]).
+ 2. Press Arrow Keys to shrink or expand the window.
+ 3. Press Enter or Escape to lock in the size and exit resize mode.
+
+================================================================================
+ Full beginner guide with diagrams: /usr/local/share/doc/revenant-os/06-I3-USER-MANUAL.md
+ Online Wiki: https://github.com/Fixitdaz/revenant-os/blob/main/docs/06-I3-USER-MANUAL.md
+================================================================================
+EOF
+}
+
+if [ "$1" = "--cli" ] || [ -t 1 ]; then
+  if command -v less >/dev/null 2>&1; then
+    SHOW_TEXT | less -R
+  else
+    SHOW_TEXT
+  fi
+else
+  if command -v xfce4-terminal >/dev/null 2>&1; then
+    xfce4-terminal --title="i3 Window Manager Quick Reference (Press Q to exit)" --geometry=88x32 -e "$0 --cli"
+  elif command -v zenity >/dev/null 2>&1; then
+    SHOW_TEXT | zenity --text-info --title="i3 Window Manager Quick Reference" --width=720 --height=580 --font="Monospace 10" 2>/dev/null || true
+  else
+    SHOW_TEXT
+  fi
+fi
+I3_HELP_EOF
+chmod +x "$PATCH_ROOT/usr/local/bin/revenant-i3-help"
+ln -sf /usr/local/bin/revenant-i3-help "$PATCH_ROOT/usr/local/bin/i3-help"
+
+mkdir -p "$PATCH_ROOT/usr/local/share/doc/revenant-os"
+if [ -f "$REPO_ROOT/docs/06-I3-USER-MANUAL.md" ]; then
+  cp -f "$REPO_ROOT/docs/06-I3-USER-MANUAL.md" "$PATCH_ROOT/usr/local/share/doc/revenant-os/" 2>/dev/null || true
+fi
 
 mkdir -p "$PATCH_ROOT/usr/share/applications"
 cat << 'DESK_I3_EOF' > "$PATCH_ROOT/usr/share/applications/switch-to-i3.desktop"
@@ -637,13 +1075,144 @@ Categories=System;Utility;
 DESK_XFCE_EOF
 
 for ddir in "$PATCH_ROOT/etc/skel/Desktop" "$PATCH_ROOT/home/user/Desktop" "$PATCH_ROOT/home/revenant/Desktop"; do
-  cp "$PATCH_ROOT/usr/share/applications/switch-to-i3.desktop" "$ddir/Switch_to_i3.desktop"
-  cp "$PATCH_ROOT/usr/share/applications/switch-to-xfce.desktop" "$ddir/Switch_to_XFCE.desktop"
-  chmod +x "$ddir/Switch_to_i3.desktop" "$ddir/Switch_to_XFCE.desktop"
+  rm -f "$ddir/Switch_to_i3.desktop" "$ddir/Switch_to_XFCE.desktop" "$ddir/switch-to-i3.desktop" "$ddir/switch-to-xfce.desktop" 2>/dev/null || true
 done
 
-chown -R 1001:1001 "$PATCH_ROOT/home/user/Desktop" 2>/dev/null || true
-chown -R 1000:1000 "$PATCH_ROOT/home/revenant/Desktop" 2>/dev/null || true
+echo "[*] Configuring desktop dark theme, black top panel & keyboard shortcuts..."
+# Deploy GTK3 CSS override for solid black panel and crisp contrast
+for u_home in "$PATCH_ROOT/etc/skel" "$PATCH_ROOT/home/user" "$PATCH_ROOT/home/revenant" "$PATCH_ROOT/root"; do
+  mkdir -p "$u_home/.config/gtk-3.0"
+  cat << 'GTK_CSS' > "$u_home/.config/gtk-3.0/gtk.css"
+/* Revenant OS Cyber Dark Desktop & Top Bar */
+.xfce4-panel {
+    background-color: #0b0f17;
+    color: #e2e8f0;
+    border-bottom: 1px solid #1e293b;
+}
+.xfce4-panel button {
+    color: #e2e8f0;
+    background-color: transparent;
+}
+.xfce4-panel button:hover {
+    background-color: #1e293b;
+    color: #00f0ff;
+}
+.xfce4-panel label {
+    color: #e2e8f0;
+}
+window.xfce4-panel {
+    background-color: #0b0f17;
+}
+GTK_CSS
+
+  mkdir -p "$u_home/.config/xfce4/xfconf/xfce-perchannel-xml"
+  cat << 'XSET_EOF' > "$u_home/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xsettings" version="1.0">
+  <property name="Net" type="empty">
+    <property name="ThemeName" type="string" value="Adwaita-dark"/>
+    <property name="IconThemeName" type="string" value="Papirus-Dark"/>
+    <property name="EnableEventSounds" type="bool" value="false"/>
+    <property name="EnableInputFeedbackSounds" type="bool" value="false"/>
+  </property>
+  <property name="Xft" type="empty">
+    <property name="DPI" type="int" value="96"/>
+    <property name="Antialias" type="int" value="1"/>
+    <property name="Hinting" type="int" value="1"/>
+    <property name="HintStyle" type="string" value="hintslight"/>
+    <property name="RGBA" type="string" value="rgb"/>
+  </property>
+  <property name="Gtk" type="empty">
+    <property name="CursorThemeName" type="string" value="Adwaita"/>
+    <property name="CursorThemeSize" type="int" value="24"/>
+    <property name="DecorationLayout" type="string" value="menu:minimize,maximize,close"/>
+  </property>
+</channel>
+XSET_EOF
+
+  cat << 'XFWM_EOF' > "$u_home/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <property name="theme" type="string" value="Adwaita-dark"/>
+    <property name="title_alignment" type="string" value="left"/>
+    <property name="use_compositing" type="bool" value="true"/>
+  </property>
+</channel>
+XFWM_EOF
+
+  cat << 'XFPANEL_EOF' > "$u_home/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-panel" version="1.0">
+  <property name="panels" type="empty">
+    <property name="panel-1" type="empty">
+      <property name="background-style" type="uint" value="1"/>
+      <property name="background-rgba" type="array">
+        <value type="double" value="0.043"/>
+        <value type="double" value="0.058"/>
+        <value type="double" value="0.090"/>
+        <value type="double" value="1.0"/>
+      </property>
+      <property name="dark-mode" type="bool" value="true"/>
+    </property>
+  </property>
+</channel>
+XFPANEL_EOF
+
+  cat << 'SHORTCUTS_EOF' > "$u_home/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-keyboard-shortcuts.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-keyboard-shortcuts" version="1.0">
+  <property name="commands" type="empty">
+    <property name="default" type="empty"/>
+    <property name="custom" type="empty">
+      <property name="&lt;Super&gt;m" type="string" value="/usr/local/bin/revenant-voice"/>
+      <property name="&lt;Primary&gt;&lt;Alt&gt;m" type="string" value="/usr/local/bin/revenant-voice"/>
+    </property>
+  </property>
+</channel>
+SHORTCUTS_EOF
+
+  mkdir -p "$u_home/.config/i3"
+  if [ -f "$PATCH_ROOT/etc/i3/config" ]; then
+    cp -f "$PATCH_ROOT/etc/i3/config" "$u_home/.config/i3/config"
+  fi
+  sed -i '/revenant-voice/d' "$u_home/.config/i3/config" 2>/dev/null || true
+  sed -i '/revenant-i3-help/d' "$u_home/.config/i3/config" 2>/dev/null || true
+  sed -i '/Revenant OS Voice Assistant Hotkeys/d' "$u_home/.config/i3/config" 2>/dev/null || true
+  sed -i '/Revenant OS Hotkeys & Quick Reference/d' "$u_home/.config/i3/config" 2>/dev/null || true
+  cat << 'I3_HOTKEY' >> "$u_home/.config/i3/config"
+
+# Revenant OS Hotkeys & Quick Reference
+bindsym $mod+m exec --no-startup-id /usr/local/bin/revenant-voice
+bindsym Mod1+Control+m exec --no-startup-id /usr/local/bin/revenant-voice
+bindsym $mod+F1 exec --no-startup-id /usr/local/bin/revenant-i3-help
+I3_HOTKEY
+done
+
+mkdir -p "$PATCH_ROOT/etc/xdg/xfce4/xfconf/xfce-perchannel-xml"
+cp -f "$PATCH_ROOT/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/"*.xml "$PATCH_ROOT/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/" 2>/dev/null || true
+
+# Ensure Toughbook audio capture defaults are unmuted and initialized on login
+mkdir -p "$PATCH_ROOT/etc/xdg/autostart"
+cat << 'AUDIO_AUTO_EOF' > "$PATCH_ROOT/etc/xdg/autostart/revenant-audio.desktop"
+[Desktop Entry]
+Type=Application
+Name=Revenant Audio Initializer
+Exec=sh -c "amixer -q set Capture 95% unmute; amixer -q set 'Capture',0 95% unmute; amixer -q set 'Internal Mic' 95% unmute; amixer -q set 'Mic' 95% unmute; amixer -q set 'Front Mic' 95% unmute; amixer -q set 'Mic Boost' 2 unmute; amixer -q set 'Capture Boost' 2 unmute; amixer -q set 'Input Source' 'Internal Mic' || amixer -q set 'Input Source' 'Mic'; amixer -q sset 'Capture' cap; amixer -q sset 'Internal Mic' cap 2>/dev/null || true"
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+AUDIO_AUTO_EOF
+
+chown -R 1001:1001 "$PATCH_ROOT/home/user" 2>/dev/null || true
+chown -R 1000:1000 "$PATCH_ROOT/home/revenant" 2>/dev/null || true
+
+echo "[*] Configuring UFW firewall rules..."
+chroot "$PATCH_ROOT" ufw default deny incoming 2>/dev/null || true
+chroot "$PATCH_ROOT" ufw default allow outgoing 2>/dev/null || true
+chroot "$PATCH_ROOT" ufw allow 22/tcp 2>/dev/null || true
+chroot "$PATCH_ROOT" ufw --force enable 2>/dev/null || true
+chroot "$PATCH_ROOT" systemctl enable ufw 2>/dev/null || true
 
 echo "[*] Ensuring live environment sudoers and default passwords..."
 LIVE_HASH=$(openssl passwd -6 "revenant")
@@ -826,12 +1395,64 @@ if [ -f "/mnt/target/etc/skel/Desktop/Revenant_Agent.desktop" ]; then
   cp -a "/mnt/target/etc/skel/Desktop/Revenant_Agent.desktop" "/mnt/target/home/$NEW_USER/Desktop/"
   chmod +x "/mnt/target/home/$NEW_USER/Desktop/Revenant_Agent.desktop"
 fi
-if [ -f "/mnt/target/etc/skel/Desktop/Switch_to_i3.desktop" ]; then
-  cp -a "/mnt/target/etc/skel/Desktop/Switch_to_i3.desktop" "/mnt/target/home/$NEW_USER/Desktop/"
-  cp -a "/mnt/target/etc/skel/Desktop/Switch_to_XFCE.desktop" "/mnt/target/home/$NEW_USER/Desktop/"
-  chmod +x "/mnt/target/home/$NEW_USER/Desktop/Switch_to_i3.desktop" "/mnt/target/home/$NEW_USER/Desktop/Switch_to_XFCE.desktop"
-fi
+# Clean up any legacy session switch shortcuts from installed desktops (LightDM greeter handles session selection)
+rm -f "/mnt/target/home/$NEW_USER/Desktop/Switch_to_"*.desktop "/mnt/target/home/$NEW_USER/Desktop/switch-to-"*.desktop 2>/dev/null || true
+rm -f "/mnt/target/etc/skel/Desktop/Switch_to_"*.desktop "/mnt/target/etc/skel/Desktop/switch-to-"*.desktop 2>/dev/null || true
+for ddir in /mnt/target/root/Desktop /mnt/target/home/*/Desktop; do
+  rm -f "$ddir/Switch_to_"*.desktop "$ddir/switch-to-"*.desktop 2>/dev/null || true
+done
 chroot /mnt/target chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/Desktop" 2>/dev/null || true
+
+# Sanitize i3 configuration on target system to eliminate duplicate keybindings & add help hotkey
+for i3_cfg in /mnt/target/etc/i3/config /mnt/target/etc/skel/.config/i3/config /mnt/target/home/*/.config/i3/config /mnt/target/root/.config/i3/config; do
+  if [ -f "$i3_cfg" ]; then
+    sed -i '/revenant-voice/d' "$i3_cfg" 2>/dev/null || true
+    sed -i '/revenant-i3-help/d' "$i3_cfg" 2>/dev/null || true
+    sed -i '/Revenant OS Voice Assistant Hotkeys/d' "$i3_cfg" 2>/dev/null || true
+    sed -i '/Revenant OS Hotkeys & Quick Reference/d' "$i3_cfg" 2>/dev/null || true
+    cat << 'I3_HOTKEY' >> "$i3_cfg"
+
+# Revenant OS Hotkeys & Quick Reference
+bindsym $mod+m exec --no-startup-id /usr/local/bin/revenant-voice
+bindsym Mod1+Control+m exec --no-startup-id /usr/local/bin/revenant-voice
+bindsym $mod+F1 exec --no-startup-id /usr/local/bin/revenant-i3-help
+I3_HOTKEY
+  fi
+done
+
+# Deploy Revenant "R" avatar and eradicate Debian swirl for installed user
+if [ -f /mnt/target/usr/share/icons/revenant-logo.png ]; then
+  cp -f /mnt/target/usr/share/icons/revenant-logo.png "/mnt/target/home/$NEW_USER/.face" 2>/dev/null || true
+  cp -f /mnt/target/usr/share/icons/revenant-logo.png "/mnt/target/home/$NEW_USER/.face.icon" 2>/dev/null || true
+  cp -f /mnt/target/usr/share/icons/revenant-logo.png "/mnt/target/etc/skel/.face" 2>/dev/null || true
+  cp -f /mnt/target/usr/share/icons/revenant-logo.png "/mnt/target/etc/skel/.face.icon" 2>/dev/null || true
+  cp -f /mnt/target/usr/share/icons/revenant-logo.png "/mnt/target/root/.face" 2>/dev/null || true
+  cp -f /mnt/target/usr/share/icons/revenant-logo.png "/mnt/target/root/.face.icon" 2>/dev/null || true
+  for uhome in /mnt/target/home/*; do
+    if [ -d "$uhome" ]; then
+      cp -f /mnt/target/usr/share/icons/revenant-logo.png "$uhome/.face" 2>/dev/null || true
+      cp -f /mnt/target/usr/share/icons/revenant-logo.png "$uhome/.face.icon" 2>/dev/null || true
+      chroot /mnt/target chown -R "$NEW_USER:$NEW_USER" "$uhome/.face" "$uhome/.face.icon" 2>/dev/null || true
+    fi
+  done
+  mkdir -p /mnt/target/usr/share/images/desktop-base /mnt/target/usr/share/icons/desktop-base
+  for av_dest in /mnt/target/usr/share/images/desktop-base/avatar.png /mnt/target/usr/share/icons/desktop-base/avatar.png \
+                 /mnt/target/usr/share/images/desktop-base/avatar.svg /mnt/target/usr/share/icons/desktop-base/avatar.svg; do
+    cp -f /mnt/target/usr/share/icons/revenant-logo.png "$av_dest" 2>/dev/null || true
+  done
+fi
+
+# Ensure Toughbook audio capture defaults are unmuted and initialized on installed login
+mkdir -p /mnt/target/etc/xdg/autostart
+cat << 'AUDIO_AUTO_EOF' > /mnt/target/etc/xdg/autostart/revenant-audio.desktop
+[Desktop Entry]
+Type=Application
+Name=Revenant Audio Initializer
+Exec=sh -c "amixer -q set Capture 95% unmute; amixer -q set 'Capture',0 95% unmute; amixer -q set 'Internal Mic' 95% unmute; amixer -q set 'Mic' 95% unmute; amixer -q set 'Front Mic' 95% unmute; amixer -q set 'Mic Boost' 2 unmute; amixer -q set 'Capture Boost' 2 unmute; amixer -q set 'Input Source' 'Internal Mic' || amixer -q set 'Input Source' 'Mic'; amixer -q sset 'Capture' cap; amixer -q sset 'Internal Mic' cap 2>/dev/null || true"
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+AUDIO_AUTO_EOF
 
 echo "$NEW_HOST" > /mnt/target/etc/hostname
 cat << HOSTSEOF > /mnt/target/etc/hosts
@@ -871,6 +1492,48 @@ greeter-hide-users=false
 greeter-show-manual-login=true
 user-session=xfce
 GREETER_EOF
+
+mkdir -p /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf.d /mnt/target/usr/share/icons
+
+rm -f /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf.d/*debian*.conf 2>/dev/null || true
+rm -f /mnt/target/usr/share/lightdm/lightdm-gtk-greeter.conf.d/*debian*.conf 2>/dev/null || true
+rm -f /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf.d/01-revenant.conf 2>/dev/null || true
+
+cat << 'GREETER_CONF_EOF' > /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf.d/99_revenant.conf
+[greeter]
+background = /usr/share/backgrounds/revenant_bootsplash.png
+theme-name = Adwaita-dark
+icon-theme-name = Papirus-Dark
+cursor-theme-name = Adwaita
+font-name = Sans 10
+xft-antialias = true
+xft-dpi = 96
+xft-hintstyle = slight
+xft-rgba = rgb
+indicators = ~host;~spacer;~clock;~spacer;~session;~power
+clock-format = %a, %d %b  %H:%M
+default-user-image = /usr/share/icons/revenant-avatar.png
+logo = /usr/share/icons/revenant-logo.png
+hide-user-image = false
+GREETER_CONF_EOF
+
+cat << 'GREETER_MAIN_EOF' > /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf
+[greeter]
+background = /usr/share/backgrounds/revenant_bootsplash.png
+theme-name = Adwaita-dark
+icon-theme-name = Papirus-Dark
+cursor-theme-name = Adwaita
+font-name = Sans 10
+xft-antialias = true
+xft-dpi = 96
+xft-hintstyle = slight
+xft-rgba = rgb
+indicators = ~host;~spacer;~clock;~spacer;~session;~power
+clock-format = %a, %d %b  %H:%M
+default-user-image = /usr/share/icons/revenant-avatar.png
+logo = /usr/share/icons/revenant-logo.png
+hide-user-image = false
+GREETER_MAIN_EOF
 
 # Ensure registered session files exist for both XFCE and i3 in LightDM
 mkdir -p /mnt/target/usr/share/xsessions
@@ -951,6 +1614,13 @@ CFG_EOF
 
 chroot /mnt/target update-initramfs -u -k all >> "$LOG" 2>&1 || true
 
+echo "88"; echo "# Configuring hardened firewall (UFW)..."
+chroot /mnt/target ufw default deny incoming >> "$LOG" 2>&1 || true
+chroot /mnt/target ufw default allow outgoing >> "$LOG" 2>&1 || true
+chroot /mnt/target ufw allow 22/tcp >> "$LOG" 2>&1 || true
+chroot /mnt/target ufw --force enable >> "$LOG" 2>&1 || true
+chroot /mnt/target systemctl enable ufw >> "$LOG" 2>&1 || true
+
 echo "90"; echo "# Installing GRUB bootloader..."
 grub-install --target=i386-pc --boot-directory=/mnt/target/boot --recheck "$DRIVE" >> "$LOG" 2>&1 || true
 chroot /mnt/target grub-install --target=i386-pc --recheck "$DRIVE" >> "$LOG" 2>&1 || true
@@ -976,7 +1646,7 @@ insmod ext2
 set root='hd0,msdos1'
 search --no-floppy --fs-uuid --set=root $UUID
 
-menuentry "Revenant OS 1.0 (Build 17) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 18.3) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -985,7 +1655,7 @@ menuentry "Revenant OS 1.0 (Build 17) - Agentic Linux" --class debian --class gn
     initrd /boot/$INITRD
 }
 
-menuentry "Revenant OS 1.0 (Build 17) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 18.3) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -1009,11 +1679,11 @@ umount -l /mnt/target/dev 2>/dev/null || true
 umount -l /mnt/target 2>/dev/null || true
 
 echo "100"; echo "# Installation Complete!"
-) | zenity --progress --title="Installing Revenant OS 1.0 (Build 17)" --text="Starting installation..." --percentage=0 --auto-close
+) | zenity --progress --title="Installing Revenant OS 1.1 (Build 18.3)" --text="Starting installation..." --percentage=0 --auto-close
 
 if [ -f "$LOG" ] && grep -iq "Installing for i386-pc platform" "$LOG"; then
   zenity --info --title="Success" \
-    --text="<b>Revenant OS 1.0 (Build 17) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
+    --text="<b>Revenant OS 1.1 (Build 18.3) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
 else
   zenity --error --title="Error" \
     --text="An error occurred during installation. Check /tmp/revenant_install.log or the target drive."
@@ -1041,12 +1711,12 @@ if background_image /boot/grub/splash.png; then
   set color_highlight=cyan/black
 fi
 
-menuentry "Revenant OS 1.0 (Build 17) - Agentic Core (Offline Local LLM)" {
+menuentry "Revenant OS 1.1 (Build 18.3) - Agentic Core (Offline Voice + Local LLM)" {
     linux /live/vmlinuz boot=live components quiet splash
     initrd /live/initrd.img
 }
 
-menuentry "Revenant OS 1.0 (Build 17) (Safe Graphics / Failsafe)" {
+menuentry "Revenant OS 1.1 (Build 18.3) (Safe Graphics / Failsafe)" {
     linux /live/vmlinuz boot=live components nomodeset
     initrd /live/initrd.img
 }
@@ -1055,13 +1725,13 @@ EOF
 echo "[*] Packaging patched SquashFS (xz compression)..."
 mksquashfs "$PATCH_ROOT" "$WORKSPACE_DIR/image/live/filesystem.squashfs" -comp xz
 
-echo "[*] Building 1.0 Build 17 ISO with hybrid bootloader..."
-grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.0"
+echo "[*] Building 1.1 Build 18.3 ISO with hybrid bootloader..."
+grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1"
 cp -f "$ISO_TARGET" "$ISO_ALIAS"
 
 echo "[*] Cleaning up workspace..."
 rm -rf "$WORKSPACE_DIR" "$PATCH_ROOT"
 
-echo "[*] Build Complete! Revenant OS 1.0 (Build 17) ISO ready at: $ISO_TARGET"
+echo "[*] Build Complete! Revenant OS 1.1 (Build 18.3) ISO ready at: $ISO_TARGET"
 ls -lh "$ISO_TARGET" "$ISO_ALIAS"
 

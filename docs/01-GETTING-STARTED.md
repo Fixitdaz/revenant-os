@@ -54,4 +54,4 @@
 3. In the top bar of the login screen, click the session dropdown to select:
    - **Xfce Session**: Traditional full graphical desktop.
    - **i3**: Ultra-lightweight tiling window manager.
-4. You can also switch between environments at any time while logged in by clicking the **"Switch to i3"** or **"Switch to XFCE"** desktop shortcuts.
+4. You can also switch between environments at any time while logged in by running `switch-to-i3` or `switch-to-xfce` in any terminal.

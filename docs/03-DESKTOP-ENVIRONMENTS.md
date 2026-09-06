@@ -19,22 +19,21 @@ Revenant OS provides two fully configured desktop environments tailored for diff
 
 ### Method 2: On-the-Fly Desktop Switching (Without Rebooting)
 You do not need to reboot to switch between XFCE and i3:
-- **To switch from XFCE to i3**:
-  - Double-click the **"Switch to i3"** icon on your desktop, or
-  - Run the following command in any terminal:
-    ```bash
-    switch-to-i3
-    ```
-- **To switch from i3 to XFCE**:
-  - Open dmenu (`Mod + d`), type `switch-to-xfce`, and press `Enter`, or
-  - Run the following command in your terminal:
-    ```bash
-    switch-to-xfce
-    ```
+- **To switch from XFCE to i3**: Run the following command in any terminal:
+  ```bash
+  switch-to-i3
+  ```
+- **To switch from i3 to XFCE**: Open dmenu (`Mod + d`), type `switch-to-xfce`, and press `Enter`, or run in terminal:
+  ```bash
+  switch-to-xfce
+  ```
+*(Note: Redundant desktop switch shortcuts have been removed from user desktops to keep workspaces clean, as the session dropdown is directly accessible on the LightDM login screen).*
 
 ---
 
 ## i3 Window Manager Cheat Sheet
+
+> 📖 **Comprehensive Manual**: For a full beginner's tutorial with visual diagrams and jargon-free explanations, see the [i3 User Manual](06-I3-USER-MANUAL.md).
 
 ### Essential Hotkeys
 - **Mod Key**: `Windows Key` (Super)
@@ -56,6 +55,26 @@ You do not need to reboot to switch between XFCE and i3:
 - **Toggle Fullscreen**: `Mod + f`
 - **Toggle Floating Window Mode**: `Mod + Shift + Space`
 - **Resize Mode**: `Mod + r` (use arrow keys to adjust, press `Esc` to exit resize mode)
+
+---
+
+## 🎙️ Global Voice Assistant Hotkey (`Super + M`)
+Revenant OS features a system-wide hotkey to talk directly to your offline field agent without cluttering your desktop:
+- **`Super + M`** (Windows Key + M) — Single-window coordinator:
+  - If the **Revenant Field Agent** is already open, it brings the window to the front and activates voice listening inside the current session.
+  - If the agent is not running, it launches a single terminal instance with microphone mode ready.
+  - Spoken words are transcribed with local Whisper STT and pre-filled directly into the prompt (`revenant ❯ ...`) so you can review, edit, or hit Enter.
+- **Alternative Hotkey**: `Ctrl + Alt + M` (`Mod1+Control+m`) also triggers the voice coordinator. (`Mod + v` is strictly reserved for i3 vertical splitting to eliminate keybinding collisions).
+- **Manual Command**: Run `revenant-voice` in any terminal or click the **"Revenant Voice Assistant"** desktop shortcut.
+
+---
+
+## 🎨 Cyber Dark Theme & Obsidian Top Bar
+Revenant OS uses a unified, low-light tactical dark theme designed for nighttime and field use:
+- **GTK & Window Theme**: `Adwaita-dark` window borders and dark widget backgrounds.
+- **Icon Theme**: `Papirus-Dark` with high-contrast tactical emblems.
+- **Top Panel**: Solid black/obsidian styling (`#0b0f17`) with crisp off-white text and neon cyan accents, eliminating glaring white borders.
+- **Login Screen**: Fully de-branded LightDM greeter with custom `revenant_bootsplash.png` background, dark controls, and the cybernetic Revenant **"R"** logo badge replacing the Debian swirl.
 
 ---
 
