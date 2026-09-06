@@ -89,14 +89,14 @@ if [ ! -f "$LOCAL_VERSION_FILE" ]; then
 {
   "os_name": "Revenant OS",
   "version": "1.0.0",
-  "build": "16.1",
+  "build": "17",
   "release_date": "2026-09-06"
 }
 EOF
 fi
 
 CURRENT_VER=$(grep -oP '"version":\s*"\K[^"]+' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "1.0.0")
-CURRENT_BUILD=$(grep -oP '"build":\s*"?\K[0-9]+(\.[0-9]+)?' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "16.1")
+CURRENT_BUILD=$(grep -oP '"build":\s*"?\K[0-9]+(\.[0-9]+)?' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "17")
 
 echo -e "${CYAN}[*] Current Installed Version: ${BOLD}v$CURRENT_VER (Build $CURRENT_BUILD)${RESET}"
 echo -e "${CYAN}[*] Querying remote release manifest from GitHub...${RESET}"
@@ -214,7 +214,7 @@ StartLimitBurst=0
 [Service]
 Type=simple
 Environment=LD_LIBRARY_PATH=/opt/llama.cpp
-ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --alias qwen2.5-coder-1.5b-instruct --host 127.0.0.1 --port 8080 --ctx-size 16384 --threads 2 -np 1 --no-cache-prompt -sps 0 --n-gpu-layers 0
+ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --alias qwen2.5-coder-1.5b-instruct --host 127.0.0.1 --port 8080 --ctx-size 4096 --threads 2 -np 1 --no-cache-prompt -sps 0 --n-gpu-layers 0
 Restart=always
 RestartSec=5
 User=root
@@ -227,7 +227,7 @@ pkill -9 -f llama-server 2>/dev/null || true
 systemctl daemon-reload
 systemctl enable llama-server.service 2>/dev/null || true
 systemctl restart llama-server.service 2>/dev/null || true
-echo -e "${GREEN}[✓] Local inference server configured on http://127.0.0.1:8080/v1 (16K context, no-cache-prompt, zero stutter golden config)${RESET}"
+echo -e "${GREEN}[✓] Local inference server configured on http://127.0.0.1:8080/v1 (4K context, no-cache-prompt, fast CPU golden config)${RESET}"
 
 # Rewrite revenant-services desktop launcher script (fixes truncation bugs from V15.7 and earlier)
 echo -e "${CYAN}  -> Updating AI Engine desktop launcher script...${RESET}"
@@ -291,13 +291,13 @@ systemctl is-active openviking.service
 
 echo ""
 echo -e "${GREEN}${BOLD}How to interact with your local AI:${RESET}"
-echo -e "  1. Universal CLI:   ${BOLD}ai \"What is the IP address of this machine?\"${RESET}"
-echo -e "  2. Autonomous Agent: ${BOLD}hermes${RESET}"
-echo -e "  3. OpenInterpreter:  ${BOLD}interpreter${RESET}"
+echo -e "  1. Universal CLI:     ${BOLD}ai \"What is the IP address of this machine?\"${RESET}"
+echo -e "  2. Revenant Agent:    ${BOLD}revenant-agent${RESET} (or simply ${BOLD}ai${RESET})"
+echo -e "  3. OpenInterpreter:   ${BOLD}interpreter${RESET}"
 echo ""
-echo -e "Press [Enter] to launch an interactive Hermes session, or Ctrl+C to exit..."
+echo -e "Press [Enter] to launch an interactive Revenant Agent session, or Ctrl+C to exit..."
 read -r
-hermes
+revenant-agent
 STARTEOF
 chmod +x /usr/local/bin/revenant-services
 echo -e "${GREEN}[✓] Desktop AI launcher script updated.${RESET}"
@@ -340,50 +340,252 @@ sed -i '/OPENAI_API_KEY/d' /etc/environment 2>/dev/null || true
 echo 'OPENAI_API_BASE="http://127.0.0.1:8080/v1"' >> /etc/environment
 echo 'OPENAI_API_KEY="sk-local-revenant"' >> /etc/environment
 
-# Patch Hermes Agent hardcoded minimum context floor if present
-if [ -f /usr/lib/node_modules/hermes-agent/runtime/hermes-agent/agent/model_metadata.py ]; then
-  sed -i 's/MINIMUM_CONTEXT_LENGTH = 64_000/MINIMUM_CONTEXT_LENGTH = 4_000/g' /usr/lib/node_modules/hermes-agent/runtime/hermes-agent/agent/model_metadata.py
-  sed -i 's/MINIMUM_CONTEXT_LENGTH = 8_000/MINIMUM_CONTEXT_LENGTH = 4_000/g' /usr/lib/node_modules/hermes-agent/runtime/hermes-agent/agent/model_metadata.py
-fi
-
-# Update Hermes config templates with 4k context_length and auxiliary compression overrides
-for u_home in /root /etc/skel /home/*; do
-  if [ -d "$u_home" ]; then
-    mkdir -p "$u_home/.hermes"
-    cat << 'HERMES_UPDATE_CFG' > "$u_home/.hermes/config.yaml"
-model:
-  default: "qwen2.5-coder-1.5b-instruct"
-  provider: "custom"
-  base_url: "http://127.0.0.1:8080/v1"
-  context_length: 16384
-custom_providers:
-  - name: "local"
-    base_url: "http://127.0.0.1:8080/v1"
-    models:
-      qwen2.5-coder-1.5b-instruct:
-        context_length: 16384
-auxiliary:
-  title_generation:
-    enabled: false
-    provider: "custom"
-    model: "qwen2.5-coder-1.5b-instruct"
-    timeout: 180
-  compression:
-    model: "qwen2.5-coder-1.5b-instruct"
-    context_length: 16384
-toolsets:
-  - "hermes-cli"
-HERMES_UPDATE_CFG
-    cat << 'HERMES_UPDATE_ENV' > "$u_home/.hermes/.env"
-OPENAI_BASE_URL=http://127.0.0.1:8080/v1
-OPENAI_API_KEY=sk-local-revenant
-HERMES_UPDATE_ENV
-    u_owner=$(stat -c '%u:%g' "$u_home" 2>/dev/null || echo "1000:1000")
-    chown -R "$u_owner" "$u_home/.hermes" 2>/dev/null || true
-  fi
+# Purge Hermes Agent and stop any background Hermes processes
+echo -e "${CYAN}  -> Decommissioning resource-heavy Hermes Agent & stopping background tasks...${RESET}"
+pkill -9 -f hermes 2>/dev/null || true
+npm uninstall -g hermes-agent 2>/dev/null || true
+rm -f /usr/local/bin/hermes /usr/bin/hermes
+for uh in /root /etc/skel /home/*; do
+  rm -rf "$uh/.hermes" 2>/dev/null || true
 done
+echo -e "${GREEN}[✓] Hermes Agent purged. System resources restored to CPU & RAM.${RESET}"
 
-echo -e "${GREEN}[✓] OpenViking memory daemon and Hermes 16K configuration synchronized.${RESET}"
+# Install Revenant Custom Agent (Ultra-fast CPU-optimized autonomous agent)
+echo -e "${CYAN}  -> Deploying Revenant Custom Agent (/usr/local/bin/revenant-agent)...${RESET}"
+cat << 'AGENT_EOF' > /usr/local/bin/revenant-agent
+#!/usr/bin/env python3
+# ==============================================================================
+# Revenant OS - Native Autonomous Agent Core (CPU-Optimized for Panasonic Toughbook)
+# ==============================================================================
+import sys, os, json, re, urllib.request, subprocess, glob, time
+try:
+    import readline
+except ImportError:
+    pass
+
+CYAN = "\033[96m"
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+RED = "\033[91m"
+BOLD = "\033[1m"
+DIM = "\033[2m"
+RESET = "\033[0m"
+
+SYSTEM_PROMPT = """You are the Revenant OS Autonomous Agent on a Panasonic Toughbook.
+You are concise, highly practical, and expert in Linux systems.
+You can inspect the system and run actions using these commands:
+- [EXEC: bash_command] to execute terminal commands (e.g. [EXEC: df -h], [EXEC: ip a])
+- [READ: filepath] to view file contents
+- [WRITE: filepath | content] to create or update files
+Keep explanations brief. Provide the command needed to solve the user's task."""
+
+VOICE_ENABLED = False
+
+def speak_text(text):
+    if not VOICE_ENABLED:
+        return
+    clean = re.sub(r'\[.*?\]', '', text)
+    clean = re.sub(r'[*`#_"\']', '', clean).strip()
+    if clean:
+        cmd = f"echo '{clean}' | /opt/piper/piper -m /opt/piper/models/en_US-lessac-medium.onnx --output_raw 2>/dev/null | aplay -r 22050 -f S16_LE -t raw - 2>/dev/null"
+        subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+def get_system_telemetry():
+    telemetry = []
+    # Battery
+    bats = glob.glob('/sys/class/power_supply/BAT*/capacity')
+    if bats:
+        try:
+            with open(bats[0]) as f:
+                cap = f.read().strip()
+            telemetry.append(f"Battery: {cap}%")
+        except Exception:
+            pass
+    # Temp
+    temps = glob.glob('/sys/class/thermal/thermal_zone*/temp')
+    if temps:
+        try:
+            with open(temps[0]) as f:
+                t = int(f.read().strip()) / 1000.0
+            telemetry.append(f"Temp: {t:.1f}°C")
+        except Exception:
+            pass
+    # RAM
+    try:
+        out = subprocess.check_output("free -m | awk '/Mem:/ {print $3\"/\"$2\"MB\"}'", shell=True).decode().strip()
+        telemetry.append(f"RAM: {out}")
+    except Exception:
+        pass
+    return " | ".join(telemetry)
+
+def execute_tool(action_type, payload):
+    if action_type == "EXEC":
+        cmd = payload.strip()
+        print(f"\n{YELLOW}{BOLD}▶ Proposed Action:{RESET} {CYAN}{cmd}{RESET}")
+        choice = input(f"{YELLOW}Execute? [Y/n/edit]: {RESET}").strip().lower()
+        if choice in ('', 'y', 'yes'):
+            try:
+                proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=60)
+                output = proc.stdout.strip()
+                print(f"{DIM}{output}{RESET}\n")
+                return f"Exit code {proc.returncode}\nOutput:\n{output}"
+            except subprocess.TimeoutExpired:
+                print(f"{RED}[Command timed out after 60s]{RESET}")
+                return "Command timed out after 60 seconds."
+            except Exception as e:
+                return f"Error executing command: {e}"
+        elif choice == 'edit':
+            new_cmd = input(f"{YELLOW}Edit command: {RESET}").strip()
+            if new_cmd:
+                return execute_tool("EXEC", new_cmd)
+            return "Command cancelled."
+        else:
+            print(f"{RED}Command cancelled by user.{RESET}")
+            return "Command rejected by user."
+
+    elif action_type == "READ":
+        path = payload.strip()
+        if not os.path.exists(path):
+            return f"Error: File {path} does not exist."
+        try:
+            with open(path, 'r', errors='ignore') as f:
+                content = f.read(4000)
+            print(f"{GREEN}[Read {path} ({len(content)} chars)]{RESET}")
+            return f"Contents of {path}:\n{content}"
+        except Exception as e:
+            return f"Error reading {path}: {e}"
+
+    elif action_type == "WRITE":
+        parts = payload.split('|', 1)
+        if len(parts) == 2:
+            path, content = parts[0].strip(), parts[1].strip()
+            try:
+                with open(path, 'w') as f:
+                    f.write(content)
+                print(f"{GREEN}[Wrote to {path}]{RESET}")
+                return f"Successfully written to {path}"
+            except Exception as e:
+                return f"Error writing to {path}: {e}"
+        return "Error: Invalid WRITE syntax. Use [WRITE: filepath | content]"
+
+    return "Unknown tool action."
+
+def call_local_model(messages, max_tokens=384):
+    payload = json.dumps({
+        "model": "qwen2.5-coder-1.5b-instruct",
+        "messages": messages,
+        "temperature": 0.5,
+        "max_tokens": max_tokens,
+        "stream": True
+    }).encode('utf-8')
+
+    req = urllib.request.Request(
+        "http://127.0.0.1:8080/v1/chat/completions",
+        data=payload,
+        headers={"Content-Type": "application/json"}
+    )
+
+    collected = []
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        for line in resp:
+            line = line.decode('utf-8').strip()
+            if not line:
+                continue
+            if line.startswith("data: "):
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    if delta:
+                        sys.stdout.write(delta)
+                        sys.stdout.flush()
+                        collected.append(delta)
+                except json.JSONDecodeError:
+                    pass
+    print()
+    return "".join(collected)
+
+def run_agent_loop():
+    global VOICE_ENABLED
+    os.system('clear')
+    print(f"{CYAN}{BOLD}=========================================================={RESET}")
+    print(f"{CYAN}{BOLD}        REVENANT OS - AUTONOMOUS FIELD AGENT CORE         {RESET}")
+    print(f"{CYAN}{BOLD}=========================================================={RESET}")
+    telem = get_system_telemetry()
+    if telem:
+        print(f"{DIM}{telem}{RESET}")
+    print(f"{DIM}Commands: /clear (reset memory) | /voice (toggle speech) | /sys | exit{RESET}\n")
+
+    history = [
+        {"role": "system", "content": SYSTEM_PROMPT}
+    ]
+
+    while True:
+        try:
+            user_input = input(f"{GREEN}{BOLD}revenant ❯ {RESET}").strip()
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
+            break
+
+        if not user_input:
+            continue
+
+        if user_input.lower() in ('exit', 'quit', ':q'):
+            print(f"{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
+            break
+        elif user_input == '/clear':
+            history = [{"role": "system", "content": SYSTEM_PROMPT}]
+            print(f"{GREEN}[✓] Conversation memory cleared.{RESET}\n")
+            continue
+        elif user_input == '/voice':
+            VOICE_ENABLED = not VOICE_ENABLED
+            state = "ENABLED" if VOICE_ENABLED else "DISABLED"
+            print(f"{CYAN}[*] Voice speech synthesis is now {state}.{RESET}\n")
+            continue
+        elif user_input == '/sys':
+            print(f"\n{CYAN}{BOLD}Toughbook Hardware Diagnostics:{RESET}")
+            subprocess.run("uname -a; uptime; free -h; df -h /; sensors 2>/dev/null || true", shell=True)
+            print()
+            continue
+
+        history.append({"role": "user", "content": user_input})
+
+        # Compact history if it exceeds 10 turns to keep prompt processing instant
+        if len(history) > 10:
+            history = [history[0]] + history[-8:]
+
+        print(f"\n{CYAN}[Revenant Agent Thinking...]{RESET}")
+        try:
+            response = call_local_model(history)
+            history.append({"role": "assistant", "content": response})
+            speak_text(response)
+
+            # Tool extraction loop
+            tool_matches = re.findall(r'\[(EXEC|READ|WRITE):\s*(.*?)\]', response, re.DOTALL)
+            for action_type, payload in tool_matches:
+                result = execute_tool(action_type, payload)
+                # Feed tool result back to agent
+                history.append({"role": "user", "content": f"Tool execution result:\n{result}"})
+                print(f"\n{CYAN}[Revenant Agent Analyzing Result...]{RESET}")
+                followup = call_local_model(history, max_tokens=256)
+                history.append({"role": "assistant", "content": followup})
+                speak_text(followup)
+
+            print()
+
+        except urllib.error.URLError as e:
+            print(f"\n{RED}[!] Cannot connect to local inference server: {e}{RESET}")
+            print(f"{YELLOW}Ensure llama-server is active: sudo systemctl restart llama-server{RESET}\n")
+        except Exception as e:
+            print(f"\n{RED}[!] Agent Error: {e}{RESET}\n")
+
+if __name__ == '__main__':
+    run_agent_loop()
+AGENT_EOF
+chmod +x /usr/local/bin/revenant-agent
+echo -e "${GREEN}[✓] Revenant Custom Agent installed to /usr/local/bin/revenant-agent.${RESET}"
 
 # TIER 3: Universal 'ai' Command (Offline Local Integration)
 echo ""
@@ -393,6 +595,9 @@ cat << 'PYEOF' > /usr/local/bin/ai
 import sys, json, urllib.request, subprocess
 
 if len(sys.argv) < 2:
+    # If no arguments provided, launch interactive Revenant Custom Agent
+    if os.path.exists("/usr/local/bin/revenant-agent"):
+        os.execv("/usr/local/bin/revenant-agent", ["revenant-agent"])
     print("\033[93mUsage: ai <your question or command>\033[0m")
     print("Runs 100% locally via Qwen2.5-Coder on llama-server (port 8080).")
     sys.exit(1)
@@ -454,6 +659,7 @@ chmod +x /usr/local/bin/ai
 # Update Desktop Launchers for AI stack
 for ddir in /etc/skel/Desktop /root/Desktop /home/*/Desktop; do
   if [ -d "$ddir" ]; then
+    rm -f "$ddir/"*hermes*.desktop "$ddir/"*Hermes*.desktop 2>/dev/null || true
     cat << 'DESKEOF' > "$ddir/Start_AI_Engine.desktop"
 [Desktop Entry]
 Version=1.0
@@ -467,8 +673,23 @@ StartupNotify=true
 Categories=System;Utility;Development;
 DESKEOF
     chmod +x "$ddir/Start_AI_Engine.desktop"
+
+    cat << 'AGENTDESK_EOF' > "$ddir/Revenant_Agent.desktop"
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Revenant Autonomous Agent
+Comment=Interactive Field Agent for Panasonic Toughbook
+Exec=xfce4-terminal --title="Revenant Field Agent" --geometry=100x30 -e "/usr/local/bin/revenant-agent"
+Icon=terminal
+Terminal=false
+StartupNotify=true
+Categories=System;Utility;Development;
+AGENTDESK_EOF
+    chmod +x "$ddir/Revenant_Agent.desktop"
+
     u_owner=$(stat -c '%u:%g' "$ddir" 2>/dev/null || echo "1000:1000")
-    chown "$u_owner" "$ddir/Start_AI_Engine.desktop" 2>/dev/null || true
+    chown "$u_owner" "$ddir/Start_AI_Engine.desktop" "$ddir/Revenant_Agent.desktop" 2>/dev/null || true
   fi
 done
 
@@ -671,8 +892,8 @@ echo -e "${GREEN}[✓] Security packages and hardware profiles synchronized.${RE
 # Update GRUB boot menu title to display current release
 if [ -f /boot/grub/grub.cfg ]; then
   echo -e "${CYAN}[*] Updating GRUB bootloader menu title...${RESET}"
-  sed -i -E 's/Revenant OS (V[0-9.]+|[0-9.]+ \(Build [0-9.]+\))/Revenant OS 1.0 (Build 16.1)/g' /boot/grub/grub.cfg 2>/dev/null || true
-  echo -e "${GREEN}[✓] GRUB bootloader title updated to Revenant OS 1.0 (Build 16.1).${RESET}"
+  sed -i -E 's/Revenant OS (V[0-9.]+|[0-9.]+ \(Build [0-9.]+\))/Revenant OS 1.0 (Build 17)/g' /boot/grub/grub.cfg 2>/dev/null || true
+  echo -e "${GREEN}[✓] GRUB bootloader title updated to Revenant OS 1.0 (Build 17).${RESET}"
 fi
 
 cat << EOF > "$LOCAL_VERSION_FILE"
@@ -684,12 +905,12 @@ cat << EOF > "$LOCAL_VERSION_FILE"
     "engine": "llama-server",
     "model": "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
     "port": 8080,
-    "context_size": 16384
+    "context_size": 4096
   },
   "agent_core": {
-    "openviking": "active",
+    "revenant_agent": "native",
     "open_interpreter": "latest",
-    "hermes_agent": "latest"
+    "openviking": "active"
   },
   "last_updated": "$(date -Iseconds)"
 }

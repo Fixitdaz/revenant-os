@@ -124,7 +124,7 @@ StartLimitBurst=0
 [Service]
 Type=simple
 Environment=LD_LIBRARY_PATH=/opt/llama.cpp
-ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --alias qwen2.5-coder-1.5b-instruct --host 127.0.0.1 --port 8080 --ctx-size 16384 --threads 2 -np 1 --no-cache-prompt -sps 0 --n-gpu-layers 0
+ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --alias qwen2.5-coder-1.5b-instruct --host 127.0.0.1 --port 8080 --ctx-size 4096 --threads 2 -np 1 --no-cache-prompt -sps 0 --n-gpu-layers 0
 Restart=always
 RestartSec=5
 User=root
@@ -226,6 +226,8 @@ cat << 'PYEOF' > "$PATCH_ROOT/usr/local/bin/ai"
 import sys, json, urllib.request, subprocess
 
 if len(sys.argv) < 2:
+    if os.path.exists("/usr/local/bin/revenant-agent"):
+        os.execv("/usr/local/bin/revenant-agent", ["revenant-agent"])
     print("\033[93mUsage: ai <your question or command>\033[0m")
     print("Runs 100% locally via Qwen2.5-Coder on llama-server (port 8080).")
     sys.exit(1)
