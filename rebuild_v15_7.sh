@@ -103,6 +103,13 @@ if [ -d "$CACHE_DIR/llama_bins" ]; then
 fi
 chmod +x "$PATCH_ROOT/opt/llama.cpp/llama-server" 2>/dev/null || true
 
+# Ensure model GGUF is present in squashfs (safety net in case source ISO chain breaks)
+mkdir -p "$PATCH_ROOT/opt/models"
+if [ -f "$CACHE_DIR/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf" ] && [ ! -f "$PATCH_ROOT/opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf" ]; then
+  echo "[*] Copying Qwen2.5-Coder-1.5B model into squashfs root..."
+  cp "$CACHE_DIR/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf" "$PATCH_ROOT/opt/models/"
+fi
+
 # Configure ld.so for llama.cpp libraries
 echo "/opt/llama.cpp" > "$PATCH_ROOT/etc/ld.so.conf.d/llama.conf"
 chroot "$PATCH_ROOT" ldconfig 2>/dev/null || true
@@ -110,15 +117,16 @@ chroot "$PATCH_ROOT" ldconfig 2>/dev/null || true
 echo "[*] Configuring systemd service for llama-server..."
 cat << 'SVCEOF' > "$PATCH_ROOT/etc/systemd/system/llama-server.service"
 [Unit]
-Description=Revenant OS Local Llama Inference Serve
+Description=Revenant OS Local Llama Inference Server
 After=network.target
+StartLimitBurst=0
 
 [Service]
 Type=simple
 Environment=LD_LIBRARY_PATH=/opt/llama.cpp
 ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --alias qwen2.5-coder-1.5b-instruct --host 127.0.0.1 --port 8080 --ctx-size 2048 --threads 2 -np 1 --no-cache-prompt -sps 0 --n-gpu-layers 0
 Restart=always
-RestartSec=3
+RestartSec=5
 User=root
 
 [Install]
@@ -257,7 +265,7 @@ echo "[*] Installing 'Start AI Stack & Diagnostics' desktop launcher and control
 cat << 'STARTEOF' > "$PATCH_ROOT/usr/local/bin/revenant-services"
 #!/bin/bash
 # ==============================================================================
-# Revenant OS - Local AI Engine & Background Services Controlle
+# Revenant OS - Local AI Engine & Background Services Controller
 # ==============================================================================
 
 CYAN="\033[96m"
@@ -267,7 +275,7 @@ RED="\033[91m"
 RESET="\033[0m"
 BOLD="\033[1m"
 
-clea
+clear
 echo -e "${CYAN}${BOLD}"
 echo "=========================================================="
 echo "    REVENANT OS - LOCAL AI ENGINE & BACKGROUND STACK     "
@@ -282,8 +290,9 @@ echo -e "${CYAN}[*] Checking & Restarting openviking.service...${RESET}"
 sudo systemctl restart openviking.service 2>/dev/null || sudo systemctl start openviking.service 2>/dev/null || true
 
 echo -e "${CYAN}[*] Waiting for local model endpoint (http://127.0.0.1:8080/v1)...${RESET}"
+echo -e "${CYAN}    (Loading 1.1GB model on Toughbook CPU — this can take up to 90 seconds)${RESET}"
 READY=false
-for i in {1..15}; do
+for i in {1..90}; do
   if curl -s http://127.0.0.1:8080/v1/models >/dev/null 2>&1; then
     READY=true
     break
@@ -296,7 +305,12 @@ echo ""
 if [ "$READY" = true ]; then
   echo -e "${GREEN}${BOLD}[✓] Local AI Engine is ACTIVE and ready on port 8080!${RESET}"
 else
-  echo -e "${YELLOW}[!] llama-server is initializing in the background.${RESET}"
+  echo -e "${YELLOW}[!] llama-server has not responded yet. Checking logs...${RESET}"
+  echo ""
+  sudo journalctl -u llama-server -n 10 --no-pager 2>/dev/null || true
+  echo ""
+  echo -e "${YELLOW}    If it says 'Illegal instruction' the binary may not support this CPU.${RESET}"
+  echo -e "${YELLOW}    If it says 'model not found' run: sudo revenant-update --force${RESET}"
 fi
 
 echo ""
@@ -313,12 +327,12 @@ echo -e "  2. Autonomous Agent: ${BOLD}hermes${RESET}"
 echo -e "  3. OpenInterpreter:  ${BOLD}interpreter${RESET}"
 echo ""
 echo -e "Press [Enter] to launch an interactive Hermes session, or Ctrl+C to exit..."
-read -
+read -r
 hermes
 STARTEOF
 chmod +x "$PATCH_ROOT/usr/local/bin/revenant-services"
 
-# Create Desktop launche
+# Create Desktop launcher
 for ddir in "$PATCH_ROOT/etc/skel/Desktop" "$PATCH_ROOT/home/user/Desktop" "$PATCH_ROOT/home/revenant/Desktop"; do
   mkdir -p "$ddir"
   cat << 'DESKEOF' > "$ddir/Start_AI_Engine.desktop"
@@ -362,10 +376,10 @@ cat << 'DESK_I3_EOF' > "$PATCH_ROOT/usr/share/applications/switch-to-i3.desktop"
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Switch to i3 Window Manage
-Comment=Switch current desktop session to i3 tiling window manage
+Name=Switch to i3 Window Manager
+Comment=Switch current desktop session to i3 tiling window manager
 Exec=/usr/local/bin/switch-to-i3
-Icon=window-manage
+Icon=window-manager
 Terminal=false
 StartupNotify=true
 Categories=System;Utility;
@@ -594,7 +608,7 @@ ff02::2     ip6-allrouters
 HOSTSEOF
 
 # Disable autologin so LightDM displays login greeter on boot
-# This gives the user access to their user account and the XFCE/i3 session selecto
+# This gives the user access to their user account and the XFCE/i3 session selector
 rm -f /mnt/target/etc/lightdm/lightdm.conf.d/*autologin*.conf
 rm -f /mnt/target/etc/lightdm/lightdm.conf.d/*live*.conf
 rm -f /mnt/target/etc/lightdm/lightdm.conf.d/*debian*.conf
@@ -609,13 +623,13 @@ for cf in /mnt/target/etc/lightdm/lightdm.conf.d/*.conf /mnt/target/usr/share/li
   fi
 done
 
-# Explicitly configure LightDM greeter to show user list and session picke
+# Explicitly configure LightDM greeter to show user list and session picker
 mkdir -p /mnt/target/etc/lightdm/lightdm.conf.d
 cat << 'GREETER_EOF' > /mnt/target/etc/lightdm/lightdm.conf.d/01-revenant-greeter.conf
 [Seat:*]
 autologin-user=
 autologin-guest=false
-greeter-session=lightdm-gtk-greete
+greeter-session=lightdm-gtk-greeter
 greeter-hide-users=false
 greeter-show-manual-login=true
 user-session=xfce
@@ -626,7 +640,7 @@ mkdir -p /mnt/target/usr/share/xsessions
 cat << 'I3_XSESSION' > /mnt/target/usr/share/xsessions/i3.desktop
 [Desktop Entry]
 Name=i3
-Comment=improved dynamic tiling window manage
+Comment=improved dynamic tiling window manager
 Exec=i3
 TryExec=i3
 Type=Application
