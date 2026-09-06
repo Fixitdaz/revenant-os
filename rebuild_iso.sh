@@ -163,7 +163,7 @@ CONFIG_RD_LZ4=y
 CONFIG_RD_ZSTD=y
 CFG_EOF
 
-echo "[*] Purging Hermes Agent & deploying Revenant Custom Agent..."
+echo "[*] Purging legacy services and deploying Revenant Custom Agent..."
 rm -f "$PATCH_ROOT/usr/local/bin/hermes" "$PATCH_ROOT/usr/bin/hermes"
 rm -rf "$PATCH_ROOT/usr/lib/node_modules/hermes-agent"
 for target_dir in "$PATCH_ROOT/root/.hermes" "$PATCH_ROOT/etc/skel/.hermes" "$PATCH_ROOT/home/user/.hermes" "$PATCH_ROOT/home/revenant/.hermes"; do

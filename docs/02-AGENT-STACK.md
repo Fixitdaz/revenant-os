@@ -45,7 +45,7 @@ ai "Write a bash one-liner to parse failed logins in /var/log/auth.log"
 ### 4. Autonomous Field Agents
 
 #### Revenant Custom Agent (`revenant-agent`)
-Revenant OS features a native, ultra-lightweight autonomous agent written in Python (`/usr/local/bin/revenant-agent`). Designed as a high-efficiency replacement for resource-heavy agent frameworks (such as Hermes), it operates with minimal token overhead and instant response times directly on Toughbook dual-core CPUs:
+Revenant OS features a native, ultra-lightweight autonomous agent written in Python (`/usr/local/bin/revenant-agent`). Designed as a high-efficiency autonomous agent, it operates with minimal token overhead and instant response times directly on Toughbook dual-core CPUs:
 
 - **Autonomous Tool Execution Loop**:
   - `[EXEC: bash_command]` — Proposes bash commands for inspection or execution (e.g., hardware checks, package queries, network status). Prompts the user with `Execute? [Y/n/edit]` before running.
@@ -68,10 +68,6 @@ Revenant OS features a native, ultra-lightweight autonomous agent written in Pyt
   revenant-agent
   ```
   Or run `ai` with no arguments, or click the **"Revenant Autonomous Agent"** desktop icon.
-
-> [!NOTE]
-> **Hermes Agent Decommissioning**  
-> Prior builds experimented with Hermes Agent. However, Hermes enforced high context memory floors (>4,000 to 64,000 tokens) and background auxiliary models that saturated mobile CPU cores and triggered client timeouts. In Build 17, Hermes has been fully purged from the OS image and replaced with the native Revenant Custom Agent.
 
 #### OpenInterpreter Setup
 For multi-language code generation and automated script debugging, OpenInterpreter remains available and configured in `/etc/environment` pointing to `http://127.0.0.1:8080/v1`:

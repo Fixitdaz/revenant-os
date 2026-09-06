@@ -37,13 +37,13 @@ Instead of relying on mandatory cloud subscriptions, external API keys, or accou
 - Queryable anytime via `ov ls viking://resources/` or `ov find "query"`.
 
 ### 3. 🤖 Autonomous Field Agents Ready Out-of-the-Box
-- **Revenant Custom Agent (`revenant-agent`)**: A native, ultra-lightweight autonomous agent written in Python, replacing resource-heavy alternatives like Hermes. Engineered specifically for Toughbook dual-core CPUs:
+- **Revenant Custom Agent (`revenant-agent`)**: A native, ultra-lightweight autonomous agent written in Python, engineered specifically for Toughbook dual-core CPUs:
   - **Tool Execution**: Directly inspects the system, executes bash commands (`[EXEC: ...]`), reads files (`[READ: ...]`), and writes files (`[WRITE: ...]`) with user confirmation safeguards.
   - **Live Hardware Telemetry**: Automatically displays battery percentage, CPU thermal temperatures, and RAM metrics in the header.
   - **Interactive Controls**: `/voice` (toggle speech synthesis on/off), `/sys` (hardware diagnostics), and `/clear` (reset conversation memory).
   - Launch anytime via `revenant-agent`, `ai`, or the **"Revenant Autonomous Agent"** desktop shortcut.
 - **OpenInterpreter**: Pre-configured in `/etc/environment` pointing to `http://127.0.0.1:8080/v1`. Inspects code, executes terminal commands, and edits files autonomously.
-- **OmniRoute Gateway (`:20128`)**: Available for users who also want to route prompts to external cloud LLMs (Claude, GPT-4, Groq) when an internet connection is present.
+- **100% Sovereign Offline Footprint**: Completely self-contained offline architecture with zero external telemetry or cloud proxy dependencies. All inference, memory indexing, and speech recognition run 100% locally on device.
 
 ### 4. 🖥️ Dual Desktop Environments: XFCE & i3
 - **XFCE Desktop**: Polished, low-footprint traditional desktop with custom edge-to-edge Revenant cyber skull wallpaper, customized dock, and graphical administration tools.

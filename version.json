@@ -16,7 +16,6 @@
     "revenant_agent": "native",
     "open_interpreter": "latest",
     "openviking": "active",
-    "omniroute": "latest",
     "piper_tts": "2023.11.14-2"
   }
 }

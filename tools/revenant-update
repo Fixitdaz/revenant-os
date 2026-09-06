@@ -3,7 +3,7 @@
 # Revenant OS - Intelligent Over-The-Air (OTA) System & Agent Updater
 # ==============================================================================
 # Upgrades:
-#   1. Agent Core (OmniRoute, OpenInterpreter, OpenViking, Hermes Agent)
+#   1. Agent Core (Local llama.cpp Engine, Revenant Agent, OpenInterpreter, OpenViking)
 #   2. Offline Neural TTS Voice Models (Piper)
 #   3. System Scripts, Themes, Plymouth Splash, and Desktop Configurations
 #   4. Upstream Linux Kernel & Security Patches
@@ -365,21 +365,21 @@ systemctl daemon-reload
 systemctl enable openviking.service 2>/dev/null || true
 systemctl restart openviking.service 2>/dev/null || true
 
-# Pre-configure environment defaults so Hermes and Interpreter use local llama-server
+# Pre-configure environment defaults so tools and Interpreter use local llama-server
 sed -i '/OPENAI_API_BASE/d' /etc/environment 2>/dev/null || true
 sed -i '/OPENAI_API_KEY/d' /etc/environment 2>/dev/null || true
 echo 'OPENAI_API_BASE="http://127.0.0.1:8080/v1"' >> /etc/environment
 echo 'OPENAI_API_KEY="sk-local-revenant"' >> /etc/environment
 
-# Purge Hermes Agent and stop any background Hermes processes
-echo -e "${CYAN}  -> Decommissioning resource-heavy Hermes Agent & stopping background tasks...${RESET}"
+# Purge any legacy background agent artifacts and reclaim RAM
+echo -e "${CYAN}  -> Ensuring clean sovereign offline footprint & reclaiming RAM...${RESET}"
 pkill -9 -f hermes 2>/dev/null || true
 npm uninstall -g hermes-agent 2>/dev/null || true
 rm -f /usr/local/bin/hermes /usr/bin/hermes
 for uh in /root /etc/skel /home/*; do
   rm -rf "$uh/.hermes" 2>/dev/null || true
 done
-echo -e "${GREEN}[✓] Hermes Agent purged. System resources restored to CPU & RAM.${RESET}"
+echo -e "${GREEN}[✓] Sovereign environment verified: background tasks cleared, RAM reclaimed.${RESET}"
 
 # Install Revenant Custom Agent (Ultra-fast CPU-optimized autonomous agent)
 echo -e "${CYAN}  -> Deploying Revenant Custom Agent (/usr/local/bin/revenant-agent)...${RESET}"

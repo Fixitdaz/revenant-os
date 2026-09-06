@@ -72,7 +72,7 @@ Every time `revenant-update` is executed with an active internet connection, it 
 ### Tier 2: Agent Stack & Context Memory
 - Synchronizes Python packages for OpenInterpreter and OpenViking.
 - Configures `openviking.service` automated context memory daemon.
-- Purges resource-heavy Hermes Agent and terminates any stray background instances.
+- System Slimming & Hardening: Strips legacy background services and ensures 100% sovereign offline operation.
 - Deploys the native **Revenant Custom Agent** (`/usr/local/bin/revenant-agent`) with real-time Toughbook telemetry and tool calling (`[EXEC]`, `[READ]`, `[WRITE]`).
 - Configures environment variables in `/etc/environment` (`OPENAI_API_BASE` and `OPENAI_API_KEY`).
 
