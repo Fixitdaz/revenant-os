@@ -1,9 +1,9 @@
 {
   "os_name": "Revenant OS",
   "version": "1.1.0",
-  "build": "18.2",
-  "display": "Revenant OS 1.1 (Build 18.2 - Beta)",
-  "channel": "beta",
+  "build": "18.3",
+  "display": "Revenant OS 1.1 (Build 18.3 - Stable)",
+  "channel": "stable",
   "target_hardware": "Panasonic Toughbook CF-52 & Field Laptops",
   "release_date": "2026-09-06",
   "kernel": "6.1.0-50-amd64",

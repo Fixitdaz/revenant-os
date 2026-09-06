@@ -2,7 +2,7 @@
 
 > **Sovereign, Local-First Agentic AI Linux Operating System for Panasonic Toughbooks & Field Laptops**
 
-[![Build Status](https://img.shields.io/badge/build-1.1_Build_18_Beta-00f0ff?style=for-the-badge&logo=linux)](https://github.com/Fixitdaz/revenant-os/tree/beta)
+[![Build Status](https://img.shields.io/badge/build-1.1_Build_18.3_Stable-00f0ff?style=for-the-badge&logo=linux)](https://github.com/Fixitdaz/revenant-os/releases)
 [![Target](https://img.shields.io/badge/Hardware-Panasonic_Toughbook_CF--52-ff007f?style=for-the-badge&logo=panasonic)](https://github.com/Fixitdaz/revenant-os)
 [![Base](https://img.shields.io/badge/Kernel-Linux_6.1_Debian_Bookworm-purple?style=for-the-badge&logo=debian)](https://github.com/Fixitdaz/revenant-os)
 [![Local Engine](https://img.shields.io/badge/Local_LLM-Qwen2.5--Coder--1.5B_via_llama--server-brightgreen?style=for-the-badge)](https://github.com/Fixitdaz/revenant-os)
@@ -10,8 +10,8 @@
 [![Release Channels](https://img.shields.io/badge/Channels-Stable_&_Beta-blue?style=for-the-badge)](https://github.com/Fixitdaz/revenant-os)
 
 > [!IMPORTANT]
-> **Active Development & Work-in-Progress Disclaimer**  
-> Revenant OS is currently under active development. While Build 17 is our stable production milestone, **Build 18 Beta** introduces full-duplex offline voice interaction (Whisper Speech-to-Text + Piper Text-to-Speech), complete Debian login screen de-branding, and system slimming (~350MB RAM reclaimed by purging legacy services and cloud proxies). New experimental features are isolated in the `beta` channel before promotion to stable.
+> **Revenant OS 1.1 (Build 18.3) Stable Release**  
+> Revenant OS 1.1 (Build 18.3) is our official, field-tested stable production release. It features full-duplex offline voice interaction (Whisper Speech-to-Text + Piper Text-to-Speech), complete Debian login screen de-branding with custom cybernetic visual assets, an obsidian black top panel dark theme, single-window voice coordination (`Super+M`), a comprehensive [i3 Window Manager Manual](./docs/06-I3-USER-MANUAL.md), and system slimming (~350MB RAM reclaimed by purging legacy cloud proxies and unused services). Experimental builds and new hardware drivers remain isolated on the `beta` branch.
 
 ---
 
@@ -93,13 +93,12 @@ Instead of relying on mandatory cloud subscriptions, external API keys, or accou
 ## 🚀 Installation & Quick Start
 
 1. **Download the ISO**:
-   - **Stable**: `revenant_os_1.0_build17.iso` (Verified production release)
-   - **Beta**: `revenant_os_1.1_build18_beta.iso` (Cutting-edge voice STT & debranded)
+   - **Stable Release**: [`revenant_os_1.1_build18.3.iso`](https://github.com/Fixitdaz/revenant-os/releases) (Official release image)
 2. **Flash to USB**:
    - **Windows**: Use [Rufus](https://rufus.ie/) in *DD Mode* or [BalenaEtcher](https://etcher.balena.io/).
    - **Linux / macOS**:
      ```bash
-     sudo dd if=revenant_os_1.1_build18_beta.iso of=/dev/sdX bs=4M status=progress conv=fsync
+     sudo dd if=revenant_os_1.1_build18.3.iso of=/dev/sdX bs=4M status=progress conv=fsync
      ```
 3. **Boot on Panasonic Toughbook CF-52**:
    - Insert USB into Toughbook USB port.
