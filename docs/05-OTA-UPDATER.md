@@ -87,7 +87,7 @@ Every time `revenant-update` is executed with an active internet connection, it 
 ### Tier 3.5: Dual Desktop Environments, Dark Theme & Hotkeys
 - Verifies that `i3`, `i3status`, `dmenu`, and wallpaper utilities are installed.
 - Installs `/usr/local/bin/switch-to-i3` and `/usr/local/bin/switch-to-xfce` commands.
-- Adds desktop shortcuts (`Switch_to_i3.desktop` and `Switch_to_XFCE.desktop`) to user desktops.
+- **Desktop Clutter Cleanup**: Cleans up redundant `Switch_to_i3.desktop` and `Switch_to_XFCE.desktop` shortcuts from user desktops (the session selector on the LightDM login screen handles environment choice).
 - **Global Voice Hotkey**: Configures `Super + M` (and `Ctrl + Alt + M`) to instantly pop open the floating Revenant Voice Assistant terminal.
 - **Cyber Dark Theme & Obsidian Top Bar**: Sets `Adwaita-dark`, `Papirus-Dark`, and applies GTK3 CSS to transform the XFCE top panel into a solid obsidian black bar (`#0b0f17`) with crisp white/cyan text.
 - Cleans up persistent autologin configurations in `/etc/lightdm/lightdm.conf.d/` so the LightDM greeter displays properly on boot, allowing user selection and session choice.

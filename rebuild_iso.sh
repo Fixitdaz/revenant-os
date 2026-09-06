@@ -984,9 +984,7 @@ Categories=System;Utility;
 DESK_XFCE_EOF
 
 for ddir in "$PATCH_ROOT/etc/skel/Desktop" "$PATCH_ROOT/home/user/Desktop" "$PATCH_ROOT/home/revenant/Desktop"; do
-  cp "$PATCH_ROOT/usr/share/applications/switch-to-i3.desktop" "$ddir/Switch_to_i3.desktop"
-  cp "$PATCH_ROOT/usr/share/applications/switch-to-xfce.desktop" "$ddir/Switch_to_XFCE.desktop"
-  chmod +x "$ddir/Switch_to_i3.desktop" "$ddir/Switch_to_XFCE.desktop"
+  rm -f "$ddir/Switch_to_i3.desktop" "$ddir/Switch_to_XFCE.desktop" "$ddir/switch-to-i3.desktop" "$ddir/switch-to-xfce.desktop" 2>/dev/null || true
 done
 
 echo "[*] Configuring desktop dark theme, black top panel & keyboard shortcuts..."
@@ -1078,7 +1076,6 @@ XFPANEL_EOF
     <property name="custom" type="empty">
       <property name="&lt;Super&gt;m" type="string" value="/usr/local/bin/revenant-voice"/>
       <property name="&lt;Primary&gt;&lt;Alt&gt;m" type="string" value="/usr/local/bin/revenant-voice"/>
-      <property name="&lt;Super&gt;v" type="string" value="/usr/local/bin/revenant-voice"/>
     </property>
   </property>
 </channel>
@@ -1088,12 +1085,13 @@ SHORTCUTS_EOF
   if [ -f "$PATCH_ROOT/etc/i3/config" ]; then
     cp -f "$PATCH_ROOT/etc/i3/config" "$u_home/.config/i3/config"
   fi
+  sed -i '/revenant-voice/d' "$u_home/.config/i3/config" 2>/dev/null || true
+  sed -i '/Revenant OS Voice Assistant Hotkeys/d' "$u_home/.config/i3/config" 2>/dev/null || true
   cat << 'I3_HOTKEY' >> "$u_home/.config/i3/config"
 
 # Revenant OS Voice Assistant Hotkeys
 bindsym $mod+m exec --no-startup-id /usr/local/bin/revenant-voice
 bindsym Mod1+Control+m exec --no-startup-id /usr/local/bin/revenant-voice
-bindsym $mod+v exec --no-startup-id /usr/local/bin/revenant-voice
 I3_HOTKEY
 done
 
@@ -1303,12 +1301,27 @@ if [ -f "/mnt/target/etc/skel/Desktop/Revenant_Agent.desktop" ]; then
   cp -a "/mnt/target/etc/skel/Desktop/Revenant_Agent.desktop" "/mnt/target/home/$NEW_USER/Desktop/"
   chmod +x "/mnt/target/home/$NEW_USER/Desktop/Revenant_Agent.desktop"
 fi
-if [ -f "/mnt/target/etc/skel/Desktop/Switch_to_i3.desktop" ]; then
-  cp -a "/mnt/target/etc/skel/Desktop/Switch_to_i3.desktop" "/mnt/target/home/$NEW_USER/Desktop/"
-  cp -a "/mnt/target/etc/skel/Desktop/Switch_to_XFCE.desktop" "/mnt/target/home/$NEW_USER/Desktop/"
-  chmod +x "/mnt/target/home/$NEW_USER/Desktop/Switch_to_i3.desktop" "/mnt/target/home/$NEW_USER/Desktop/Switch_to_XFCE.desktop"
-fi
+# Clean up any legacy session switch shortcuts from installed desktops (LightDM greeter handles session selection)
+rm -f "/mnt/target/home/$NEW_USER/Desktop/Switch_to_"*.desktop "/mnt/target/home/$NEW_USER/Desktop/switch-to-"*.desktop 2>/dev/null || true
+rm -f "/mnt/target/etc/skel/Desktop/Switch_to_"*.desktop "/mnt/target/etc/skel/Desktop/switch-to-"*.desktop 2>/dev/null || true
+for ddir in /mnt/target/root/Desktop /mnt/target/home/*/Desktop; do
+  rm -f "$ddir/Switch_to_"*.desktop "$ddir/switch-to-"*.desktop 2>/dev/null || true
+done
 chroot /mnt/target chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/Desktop" 2>/dev/null || true
+
+# Sanitize i3 configuration on target system to eliminate duplicate keybindings
+for i3_cfg in /mnt/target/etc/i3/config /mnt/target/etc/skel/.config/i3/config /mnt/target/home/*/.config/i3/config /mnt/target/root/.config/i3/config; do
+  if [ -f "$i3_cfg" ]; then
+    sed -i '/revenant-voice/d' "$i3_cfg" 2>/dev/null || true
+    sed -i '/Revenant OS Voice Assistant Hotkeys/d' "$i3_cfg" 2>/dev/null || true
+    cat << 'I3_HOTKEY' >> "$i3_cfg"
+
+# Revenant OS Voice Assistant Hotkeys
+bindsym $mod+m exec --no-startup-id /usr/local/bin/revenant-voice
+bindsym Mod1+Control+m exec --no-startup-id /usr/local/bin/revenant-voice
+I3_HOTKEY
+  fi
+done
 
 # Deploy Revenant "R" avatar and eradicate Debian swirl for installed user
 if [ -f /mnt/target/usr/share/icons/revenant-logo.png ]; then

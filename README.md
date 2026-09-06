@@ -53,8 +53,7 @@ Instead of relying on mandatory cloud subscriptions, external API keys, or accou
 - **i3 Tiling Window Manager**: Blazing-fast, purely keyboard-driven tiling window manager configured with instant terminal launching (`Mod+Enter`), application menus (`Mod+d`), workspace switching (`Mod+1..9`), and desktop status bars.
 - **Flexible Session Switching**:
   - **At Boot / Login**: The LightDM greeter provides an account selector and a session dropdown (top-right of screen) allowing you to choose between **Xfce Session** and **i3**.
-  - **Inside XFCE**: Click the **"Switch to i3"** desktop icon or run `switch-to-i3` in any terminal to switch instantly.
-  - **Inside i3**: Click the **"Switch to XFCE"** desktop icon or run `switch-to-xfce` in any terminal to return to the full graphical desktop.
+  - **On-the-Fly Switching**: Run `switch-to-i3` or `switch-to-xfce` in any terminal to switch environments instantly without rebooting.
 
 ### 5. 🚜 Panasonic Toughbook CF-52 Hardware Hardening & Security
 - **Hardened System Firewall (UFW)**: Pre-installed and active by default (`ufw status`). Configured to deny all unsolicited incoming connections while permitting outbound connections and SSH (`22/tcp`).
