@@ -1,7 +1,9 @@
 # Large ISO images (stored locally / published via GitHub Releases)
 *.iso
+*.iso.*
 *.img
 *.squashfs
+SHA256SUMS.txt
 
 # Temporary workspaces and build directories
 testiso/
