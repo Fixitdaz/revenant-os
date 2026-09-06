@@ -7,11 +7,11 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_DIR="/var/tmp/toughbook_rebuild_v15_5"
-PATCH_ROOT="/var/tmp/patch_root_v15_5"
-ISO_SOURCE="$SCRIPT_DIR/revenant_os_toughbook_v15_4.iso"
-ISO_TARGET="$SCRIPT_DIR/revenant_os_toughbook_v15_5.iso"
-ISO_ALIAS="$SCRIPT_DIR/revenant_os_toughbook_v15.5.iso"
+WORKSPACE_DIR="/var/tmp/toughbook_rebuild_1_0"
+PATCH_ROOT="/var/tmp/patch_root_1_0"
+ISO_SOURCE="$SCRIPT_DIR/revenant_os_toughbook_v15_5.iso"
+ISO_TARGET="$SCRIPT_DIR/revenant_os_1.0_build17.iso"
+ISO_ALIAS="$SCRIPT_DIR/revenant_os_latest.iso"
 CACHE_DIR="/var/tmp/revenant_cache"
 
 echo "[*] Cleaning up previous mounts and temporary directories..."
@@ -62,7 +62,12 @@ chroot "$PATCH_ROOT" apt-get install -y --no-install-recommends \
   libcups2 \
   libdrm2 \
   libgtk-3-0 \
-  libgbm1
+  libgbm1 \
+  lightdm-gtk-greeter \
+  i3 \
+  i3status \
+  dmenu \
+  feh
 
 # Install Bitwarden Desktop deb
 if [ -f "$CACHE_DIR/Bitwarden-amd64.deb" ]; then
@@ -98,6 +103,13 @@ if [ -d "$CACHE_DIR/llama_bins" ]; then
 fi
 chmod +x "$PATCH_ROOT/opt/llama.cpp/llama-server" 2>/dev/null || true
 
+# Ensure model GGUF is present in squashfs (safety net in case source ISO chain breaks)
+mkdir -p "$PATCH_ROOT/opt/models"
+if [ -f "$CACHE_DIR/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf" ] && [ ! -f "$PATCH_ROOT/opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf" ]; then
+  echo "[*] Copying Qwen2.5-Coder-1.5B model into squashfs root..."
+  cp "$CACHE_DIR/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf" "$PATCH_ROOT/opt/models/"
+fi
+
 # Configure ld.so for llama.cpp libraries
 echo "/opt/llama.cpp" > "$PATCH_ROOT/etc/ld.so.conf.d/llama.conf"
 chroot "$PATCH_ROOT" ldconfig 2>/dev/null || true
@@ -107,13 +119,14 @@ cat << 'SVCEOF' > "$PATCH_ROOT/etc/systemd/system/llama-server.service"
 [Unit]
 Description=Revenant OS Local Llama Inference Server
 After=network.target
+StartLimitBurst=0
 
 [Service]
 Type=simple
 Environment=LD_LIBRARY_PATH=/opt/llama.cpp
-ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --host 127.0.0.1 --port 8080 --ctx-size 20480 -np 1 --threads 2 --n-gpu-layers 0
+ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --alias qwen2.5-coder-1.5b-instruct --host 127.0.0.1 --port 8080 --ctx-size 4096 --threads 2 -np 1 --no-cache-prompt -sps 0 --n-gpu-layers 0
 Restart=always
-RestartSec=3
+RestartSec=5
 User=root
 
 [Install]
@@ -150,42 +163,246 @@ CONFIG_RD_LZ4=y
 CONFIG_RD_ZSTD=y
 CFG_EOF
 
-echo "[*] Patching Hermes Agent context floor to 8000 tokens..."
-if [ -f "$PATCH_ROOT/usr/lib/node_modules/hermes-agent/runtime/hermes-agent/agent/model_metadata.py" ]; then
-  sed -i "s/MINIMUM_CONTEXT_LENGTH = 64_000/MINIMUM_CONTEXT_LENGTH = 8_000/g" "$PATCH_ROOT/usr/lib/node_modules/hermes-agent/runtime/hermes-agent/agent/model_metadata.py"
-fi
-
-echo "[*] Configuring Hermes Agent and OpenInterpreter default offline configs..."
-# Pre-seed Hermes default configuration pointing to local Qwen model on llama-server with 64k context & aux compression
+echo "[*] Purging Hermes Agent & deploying Revenant Custom Agent..."
+rm -f "$PATCH_ROOT/usr/local/bin/hermes" "$PATCH_ROOT/usr/bin/hermes"
+rm -rf "$PATCH_ROOT/usr/lib/node_modules/hermes-agent"
 for target_dir in "$PATCH_ROOT/root/.hermes" "$PATCH_ROOT/etc/skel/.hermes" "$PATCH_ROOT/home/user/.hermes" "$PATCH_ROOT/home/revenant/.hermes"; do
-  mkdir -p "$target_dir"
-  cat << 'HERMES_CFG' > "$target_dir/config.yaml"
-model:
-  default: "qwen2.5-coder-1.5b-instruct"
-  provider: "custom"
-  base_url: "http://127.0.0.1:8080/v1"
-  context_length: 20480
-custom_providers:
-  - name: "local"
-    base_url: "http://127.0.0.1:8080/v1"
-    models:
-      qwen2.5-coder-1.5b-instruct:
-        context_length: 20480
-auxiliary:
-  compression:
-    model: "qwen2.5-coder-1.5b-instruct"
-    context_length: 20480
-toolsets:
-  - "hermes-cli"
-HERMES_CFG
-
-  cat << 'HERMES_ENV' > "$target_dir/.env"
-OPENAI_BASE_URL=http://127.0.0.1:8080/v1
-OPENAI_API_KEY=sk-local-revenant
-HERMES_ENV
+  rm -rf "$target_dir"
 done
-chown -R 1001:1001 "$PATCH_ROOT/home/user/.hermes" 2>/dev/null || true
-chown -R 1000:1000 "$PATCH_ROOT/home/revenant/.hermes" 2>/dev/null || true
+
+cat << 'AGENT_EOF' > "$PATCH_ROOT/usr/local/bin/revenant-agent"
+#!/usr/bin/env python3
+# ==============================================================================
+# Revenant OS - Native Autonomous Agent Core (CPU-Optimized for Panasonic Toughbook)
+# ==============================================================================
+import sys, os, json, re, urllib.request, subprocess, glob, time
+try:
+    import readline
+except ImportError:
+    pass
+
+CYAN = "\033[96m"
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+RED = "\033[91m"
+BOLD = "\033[1m"
+DIM = "\033[2m"
+RESET = "\033[0m"
+
+SYSTEM_PROMPT = """You are the Revenant OS Autonomous Agent on a Panasonic Toughbook.
+You are concise, highly practical, and expert in Linux systems.
+You can inspect the system and run actions using these commands:
+- [EXEC: bash_command] to execute terminal commands (e.g. [EXEC: df -h], [EXEC: ip a])
+- [READ: filepath] to view file contents
+- [WRITE: filepath | content] to create or update files
+Keep explanations brief. Provide the command needed to solve the user's task."""
+
+VOICE_ENABLED = False
+
+def speak_text(text):
+    if not VOICE_ENABLED:
+        return
+    clean = re.sub(r'\[.*?\]', '', text)
+    clean = re.sub(r'[*`#_"\']', '', clean).strip()
+    if clean:
+        cmd = f"echo '{clean}' | /opt/piper/piper -m /opt/piper/models/en_US-lessac-medium.onnx --output_raw 2>/dev/null | aplay -r 22050 -f S16_LE -t raw - 2>/dev/null"
+        subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+def get_system_telemetry():
+    telemetry = []
+    # Battery
+    bats = glob.glob('/sys/class/power_supply/BAT*/capacity')
+    if bats:
+        try:
+            with open(bats[0]) as f:
+                cap = f.read().strip()
+            telemetry.append(f"Battery: {cap}%")
+        except Exception:
+            pass
+    # Temp
+    temps = glob.glob('/sys/class/thermal/thermal_zone*/temp')
+    if temps:
+        try:
+            with open(temps[0]) as f:
+                t = int(f.read().strip()) / 1000.0
+            telemetry.append(f"Temp: {t:.1f}°C")
+        except Exception:
+            pass
+    # RAM
+    try:
+        out = subprocess.check_output("free -m | awk '/Mem:/ {print $3\"/\"$2\"MB\"}'", shell=True).decode().strip()
+        telemetry.append(f"RAM: {out}")
+    except Exception:
+        pass
+    return " | ".join(telemetry)
+
+def execute_tool(action_type, payload):
+    if action_type == "EXEC":
+        cmd = payload.strip()
+        print(f"\n{YELLOW}{BOLD}▶ Proposed Action:{RESET} {CYAN}{cmd}{RESET}")
+        choice = input(f"{YELLOW}Execute? [Y/n/edit]: {RESET}").strip().lower()
+        if choice in ('', 'y', 'yes'):
+            try:
+                proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=60)
+                output = proc.stdout.strip()
+                print(f"{DIM}{output}{RESET}\n")
+                return f"Exit code {proc.returncode}\nOutput:\n{output}"
+            except subprocess.TimeoutExpired:
+                print(f"{RED}[Command timed out after 60s]{RESET}")
+                return "Command timed out after 60 seconds."
+            except Exception as e:
+                return f"Error executing command: {e}"
+        elif choice == 'edit':
+            new_cmd = input(f"{YELLOW}Edit command: {RESET}").strip()
+            if new_cmd:
+                return execute_tool("EXEC", new_cmd)
+            return "Command cancelled."
+        else:
+            print(f"{RED}Command cancelled by user.{RESET}")
+            return "Command rejected by user."
+
+    elif action_type == "READ":
+        path = payload.strip()
+        if not os.path.exists(path):
+            return f"Error: File {path} does not exist."
+        try:
+            with open(path, 'r', errors='ignore') as f:
+                content = f.read(4000)
+            print(f"{GREEN}[Read {path} ({len(content)} chars)]{RESET}")
+            return f"Contents of {path}:\n{content}"
+        except Exception as e:
+            return f"Error reading {path}: {e}"
+
+    elif action_type == "WRITE":
+        parts = payload.split('|', 1)
+        if len(parts) == 2:
+            path, content = parts[0].strip(), parts[1].strip()
+            try:
+                with open(path, 'w') as f:
+                    f.write(content)
+                print(f"{GREEN}[Wrote to {path}]{RESET}")
+                return f"Successfully written to {path}"
+            except Exception as e:
+                return f"Error writing to {path}: {e}"
+        return "Error: Invalid WRITE syntax. Use [WRITE: filepath | content]"
+
+    return "Unknown tool action."
+
+def call_local_model(messages, max_tokens=384):
+    payload = json.dumps({
+        "model": "qwen2.5-coder-1.5b-instruct",
+        "messages": messages,
+        "temperature": 0.5,
+        "max_tokens": max_tokens,
+        "stream": True
+    }).encode('utf-8')
+
+    req = urllib.request.Request(
+        "http://127.0.0.1:8080/v1/chat/completions",
+        data=payload,
+        headers={"Content-Type": "application/json"}
+    )
+
+    collected = []
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        for line in resp:
+            line = line.decode('utf-8').strip()
+            if not line:
+                continue
+            if line.startswith("data: "):
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    if delta:
+                        sys.stdout.write(delta)
+                        sys.stdout.flush()
+                        collected.append(delta)
+                except json.JSONDecodeError:
+                    pass
+    print()
+    return "".join(collected)
+
+def run_agent_loop():
+    global VOICE_ENABLED
+    os.system('clear')
+    print(f"{CYAN}{BOLD}=========================================================={RESET}")
+    print(f"{CYAN}{BOLD}        REVENANT OS - AUTONOMOUS FIELD AGENT CORE         {RESET}")
+    print(f"{CYAN}{BOLD}=========================================================={RESET}")
+    telem = get_system_telemetry()
+    if telem:
+        print(f"{DIM}{telem}{RESET}")
+    print(f"{DIM}Commands: /clear (reset memory) | /voice (toggle speech) | /sys | exit{RESET}\n")
+
+    history = [
+        {"role": "system", "content": SYSTEM_PROMPT}
+    ]
+
+    while True:
+        try:
+            user_input = input(f"{GREEN}{BOLD}revenant ❯ {RESET}").strip()
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
+            break
+
+        if not user_input:
+            continue
+
+        if user_input.lower() in ('exit', 'quit', ':q'):
+            print(f"{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
+            break
+        elif user_input == '/clear':
+            history = [{"role": "system", "content": SYSTEM_PROMPT}]
+            print(f"{GREEN}[✓] Conversation memory cleared.{RESET}\n")
+            continue
+        elif user_input == '/voice':
+            VOICE_ENABLED = not VOICE_ENABLED
+            state = "ENABLED" if VOICE_ENABLED else "DISABLED"
+            print(f"{CYAN}[*] Voice speech synthesis is now {state}.{RESET}\n")
+            continue
+        elif user_input == '/sys':
+            print(f"\n{CYAN}{BOLD}Toughbook Hardware Diagnostics:{RESET}")
+            subprocess.run("uname -a; uptime; free -h; df -h /; sensors 2>/dev/null || true", shell=True)
+            print()
+            continue
+
+        history.append({"role": "user", "content": user_input})
+
+        # Compact history if it exceeds 10 turns to keep prompt processing instant
+        if len(history) > 10:
+            history = [history[0]] + history[-8:]
+
+        print(f"\n{CYAN}[Revenant Agent Thinking...]{RESET}")
+        try:
+            response = call_local_model(history)
+            history.append({"role": "assistant", "content": response})
+            speak_text(response)
+
+            # Tool extraction loop
+            tool_matches = re.findall(r'\[(EXEC|READ|WRITE):\s*(.*?)\]', response, re.DOTALL)
+            for action_type, payload in tool_matches:
+                result = execute_tool(action_type, payload)
+                # Feed tool result back to agent
+                history.append({"role": "user", "content": f"Tool execution result:\n{result}"})
+                print(f"\n{CYAN}[Revenant Agent Analyzing Result...]{RESET}")
+                followup = call_local_model(history, max_tokens=256)
+                history.append({"role": "assistant", "content": followup})
+                speak_text(followup)
+
+            print()
+
+        except urllib.error.URLError as e:
+            print(f"\n{RED}[!] Cannot connect to local inference server: {e}{RESET}")
+            print(f"{YELLOW}Ensure llama-server is active: sudo systemctl restart llama-server{RESET}\n")
+        except Exception as e:
+            print(f"\n{RED}[!] Agent Error: {e}{RESET}\n")
+
+if __name__ == '__main__':
+    run_agent_loop()
+AGENT_EOF
+chmod +x "$PATCH_ROOT/usr/local/bin/revenant-agent"
 
 # Pre-seed OpenInterpreter config
 for target_dir in "$PATCH_ROOT/etc/skel/.config/open-interpreter" "$PATCH_ROOT/home/user/.config/open-interpreter" "$PATCH_ROOT/home/revenant/.config/open-interpreter"; do
@@ -201,27 +418,30 @@ INTERP_CFG
 done
 chown -R 1001:1001 "$PATCH_ROOT/home/user/.config" 2>/dev/null || true
 chown -R 1000:1000 "$PATCH_ROOT/home/revenant/.config" 2>/dev/null || true
-echo "[*] Installing hardened /usr/local/bin/ai CLI (120s timeout for Toughbook CPU)..."
+echo "[*] Installing streaming /usr/local/bin/ai CLI (real-time tokens, no timeout)..."
 cat << 'PYEOF' > "$PATCH_ROOT/usr/local/bin/ai"
 #!/usr/bin/env python3
 import sys, json, urllib.request, subprocess
 
 if len(sys.argv) < 2:
+    if os.path.exists("/usr/local/bin/revenant-agent"):
+        os.execv("/usr/local/bin/revenant-agent", ["revenant-agent"])
     print("\033[93mUsage: ai <your question or command>\033[0m")
     print("Runs 100% locally via Qwen2.5-Coder on llama-server (port 8080).")
     sys.exit(1)
 
 prompt = " ".join(sys.argv[1:])
-print("\033[96m[Revenant Core: Local Qwen2.5 Thinking (Offline Toughbook CPU)...]\033[0m")
+print("\033[96m[Revenant Core: Local Qwen2.5 Thinking (Offline Toughbook CPU)...]\033[0m\n")
 
 payload = json.dumps({
     "model": "qwen2.5-coder-1.5b-instruct",
     "messages": [
-        {"role": "system", "content": "You are the Revenant OS AI Assistant on a Panasonic Toughbook. Give clear, expert Linux and computing answers."},
+        {"role": "system", "content": "You are the Revenant OS AI Assistant on a Panasonic Toughbook. Give clear, expert, concise Linux and computing answers."},
         {"role": "user", "content": prompt}
     ],
     "temperature": 0.6,
-    "max_tokens": 512
+    "max_tokens": 256,
+    "stream": True
 }).encode('utf-8')
 
 req = urllib.request.Request(
@@ -230,19 +450,37 @@ req = urllib.request.Request(
     headers={"Content-Type": "application/json"}
 )
 
+full_response = []
 try:
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        res = json.loads(resp.read().decode('utf-8'))
-        answer = res["choices"][0]["message"]["content"]
-        print("\n" + answer + "\n")
-        
-        # Strip special characters for Piper TTS
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        for line in resp:
+            line = line.decode('utf-8').strip()
+            if not line:
+                continue
+            if line.startswith("data: "):
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    if delta:
+                        sys.stdout.write(delta)
+                        sys.stdout.flush()
+                        full_response.append(delta)
+                except json.JSONDecodeError:
+                    pass
+    print("\n")
+    
+    answer = "".join(full_response)
+    if answer.strip():
+        # Clean special chars for Piper TTS audio output
         clean = answer.replace('*', '').replace('`', '').replace('#', '').replace('_', '').replace('"', '').replace("'", "")
-        # Speak response aloud asynchronously
-        cmd = f"echo '{clean}' | /opt/piper/piper -m /opt/piper/models/en_US-lessac-medium.onnx --output_raw | aplay -r 22050 -f S16_LE -t raw -"
+        cmd = f"echo '{clean}' | /opt/piper/piper -m /opt/piper/models/en_US-lessac-medium.onnx --output_raw 2>/dev/null | aplay -r 22050 -f S16_LE -t raw - 2>/dev/null"
         subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
 except Exception as e:
-    print(f"\033[91m[!] Local Engine Error: {e}\033[0m")
+    print(f"\n\033[91m[!] Local Engine Error: {e}\033[0m")
     print("Make sure llama-server is running: sudo systemctl status llama-server")
 PYEOF
 chmod +x "$PATCH_ROOT/usr/local/bin/ai"
@@ -276,8 +514,9 @@ echo -e "${CYAN}[*] Checking & Restarting openviking.service...${RESET}"
 sudo systemctl restart openviking.service 2>/dev/null || sudo systemctl start openviking.service 2>/dev/null || true
 
 echo -e "${CYAN}[*] Waiting for local model endpoint (http://127.0.0.1:8080/v1)...${RESET}"
+echo -e "${CYAN}    (Loading 1.1GB model on Toughbook CPU — this can take up to 90 seconds)${RESET}"
 READY=false
-for i in {1..15}; do
+for i in {1..90}; do
   if curl -s http://127.0.0.1:8080/v1/models >/dev/null 2>&1; then
     READY=true
     break
@@ -290,7 +529,12 @@ echo ""
 if [ "$READY" = true ]; then
   echo -e "${GREEN}${BOLD}[✓] Local AI Engine is ACTIVE and ready on port 8080!${RESET}"
 else
-  echo -e "${YELLOW}[!] llama-server is initializing in the background.${RESET}"
+  echo -e "${YELLOW}[!] llama-server has not responded yet. Checking logs...${RESET}"
+  echo ""
+  sudo journalctl -u llama-server -n 10 --no-pager 2>/dev/null || true
+  echo ""
+  echo -e "${YELLOW}    If it says 'Illegal instruction' the binary may not support this CPU.${RESET}"
+  echo -e "${YELLOW}    If it says 'model not found' run: sudo revenant-update --force${RESET}"
 fi
 
 echo ""
@@ -302,13 +546,13 @@ systemctl is-active openviking.service
 
 echo ""
 echo -e "${GREEN}${BOLD}How to interact with your local AI:${RESET}"
-echo -e "  1. Universal CLI:   ${BOLD}ai \"What is the IP address of this machine?\"${RESET}"
-echo -e "  2. Autonomous Agent: ${BOLD}hermes${RESET}"
-echo -e "  3. OpenInterpreter:  ${BOLD}interpreter${RESET}"
+echo -e "  1. Universal CLI:     ${BOLD}ai \"What is the IP address of this machine?\"${RESET}"
+echo -e "  2. Revenant Agent:    ${BOLD}revenant-agent${RESET} (or simply ${BOLD}ai${RESET})"
+echo -e "  3. OpenInterpreter:   ${BOLD}interpreter${RESET}"
 echo ""
-echo -e "Press [Enter] to launch an interactive Hermes session, or Ctrl+C to exit..."
+echo -e "Press [Enter] to launch an interactive Revenant Agent session, or Ctrl+C to exit..."
 read -r
-hermes
+revenant-agent
 STARTEOF
 chmod +x "$PATCH_ROOT/usr/local/bin/revenant-services"
 
@@ -328,6 +572,20 @@ StartupNotify=true
 Categories=System;Utility;Development;
 DESKEOF
   chmod +x "$ddir/Start_AI_Engine.desktop"
+
+  cat << 'AGENTDESK_EOF' > "$ddir/Revenant_Agent.desktop"
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Revenant Autonomous Agent
+Comment=Interactive Field Agent for Panasonic Toughbook
+Exec=xfce4-terminal --title="Revenant Field Agent" --geometry=100x30 -e "/usr/local/bin/revenant-agent"
+Icon=terminal
+Terminal=false
+StartupNotify=true
+Categories=System;Utility;Development;
+AGENTDESK_EOF
+  chmod +x "$ddir/Revenant_Agent.desktop"
 done
 
 # Create switch-to-i3 and switch-to-xfce utilities
@@ -468,7 +726,7 @@ zenity --question --title="Confirm Installation" \
   --ok-label="Yes, Erase & Install" --cancel-label="Cancel" || exit 0
 
 LOG="/tmp/revenant_install.log"
-echo "=== Revenant OS V15.5 Installation Started ===" > "$LOG"
+echo "=== Revenant OS 1.0 (Build 17) Installation Started ===" > "$LOG"
 date >> "$LOG"
 
 (
@@ -552,22 +810,21 @@ chmod 0440 /mnt/target/etc/sudoers.d/*
 sed -i 's/^# *%sudo/%sudo/' /mnt/target/etc/sudoers 2>/dev/null || true
 
 # Copy agent configs to new user's home
-if [ -d "/mnt/target/etc/skel/.hermes" ]; then
-  mkdir -p "/mnt/target/home/$NEW_USER/.hermes"
-  cp -a /mnt/target/etc/skel/.hermes/* "/mnt/target/home/$NEW_USER/.hermes/"
-  chroot /mnt/target chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.hermes" 2>/dev/null || true
-fi
 if [ -d "/mnt/target/etc/skel/.config/open-interpreter" ]; then
   mkdir -p "/mnt/target/home/$NEW_USER/.config/open-interpreter"
   cp -a /mnt/target/etc/skel/.config/open-interpreter/* "/mnt/target/home/$NEW_USER/.config/open-interpreter/"
   chroot /mnt/target chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.config" 2>/dev/null || true
 fi
 
-# Ensure Desktop and Start_AI_Engine shortcut exist in installed user home
+# Ensure Desktop and AI shortcuts exist in installed user home
 mkdir -p "/mnt/target/home/$NEW_USER/Desktop"
 if [ -f "/mnt/target/etc/skel/Desktop/Start_AI_Engine.desktop" ]; then
   cp -a "/mnt/target/etc/skel/Desktop/Start_AI_Engine.desktop" "/mnt/target/home/$NEW_USER/Desktop/"
   chmod +x "/mnt/target/home/$NEW_USER/Desktop/Start_AI_Engine.desktop"
+fi
+if [ -f "/mnt/target/etc/skel/Desktop/Revenant_Agent.desktop" ]; then
+  cp -a "/mnt/target/etc/skel/Desktop/Revenant_Agent.desktop" "/mnt/target/home/$NEW_USER/Desktop/"
+  chmod +x "/mnt/target/home/$NEW_USER/Desktop/Revenant_Agent.desktop"
 fi
 if [ -f "/mnt/target/etc/skel/Desktop/Switch_to_i3.desktop" ]; then
   cp -a "/mnt/target/etc/skel/Desktop/Switch_to_i3.desktop" "/mnt/target/home/$NEW_USER/Desktop/"
@@ -591,14 +848,46 @@ HOSTSEOF
 # This gives the user access to their user account and the XFCE/i3 session selector
 rm -f /mnt/target/etc/lightdm/lightdm.conf.d/*autologin*.conf
 rm -f /mnt/target/etc/lightdm/lightdm.conf.d/*live*.conf
-sed -i 's/^autologin-user=.*/#autologin-user=/' /mnt/target/etc/lightdm/lightdm.conf 2>/dev/null || true
-sed -i 's/^autologin-user-timeout=.*/#autologin-user-timeout=/' /mnt/target/etc/lightdm/lightdm.conf 2>/dev/null || true
-for cf in /mnt/target/etc/lightdm/lightdm.conf.d/*.conf; do
+rm -f /mnt/target/etc/lightdm/lightdm.conf.d/*debian*.conf
+rm -f /mnt/target/usr/share/lightdm/lightdm.conf.d/*live*.conf
+rm -f /mnt/target/usr/share/lightdm/lightdm.conf.d/*autologin*.conf
+sed -i -E 's/^[[:space:]]*autologin-user[[:space:]]*=.*/#autologin-user=/' /mnt/target/etc/lightdm/lightdm.conf 2>/dev/null || true
+sed -i -E 's/^[[:space:]]*autologin-user-timeout[[:space:]]*=.*/#autologin-user-timeout=/' /mnt/target/etc/lightdm/lightdm.conf 2>/dev/null || true
+for cf in /mnt/target/etc/lightdm/lightdm.conf.d/*.conf /mnt/target/usr/share/lightdm/lightdm.conf.d/*.conf; do
   if [ -f "$cf" ]; then
-    sed -i 's/^autologin-user=.*/#autologin-user=/' "$cf" 2>/dev/null || true
-    sed -i 's/^autologin-user-timeout=.*/#autologin-user-timeout=/' "$cf" 2>/dev/null || true
+    sed -i -E 's/^[[:space:]]*autologin-user[[:space:]]*=.*/#autologin-user=/' "$cf" 2>/dev/null || true
+    sed -i -E 's/^[[:space:]]*autologin-user-timeout[[:space:]]*=.*/#autologin-user-timeout=/' "$cf" 2>/dev/null || true
   fi
 done
+
+# Explicitly configure LightDM greeter to show user list and session picker
+mkdir -p /mnt/target/etc/lightdm/lightdm.conf.d
+cat << 'GREETER_EOF' > /mnt/target/etc/lightdm/lightdm.conf.d/01-revenant-greeter.conf
+[Seat:*]
+autologin-user=
+autologin-guest=false
+greeter-session=lightdm-gtk-greeter
+greeter-hide-users=false
+greeter-show-manual-login=true
+user-session=xfce
+GREETER_EOF
+
+# Ensure registered session files exist for both XFCE and i3 in LightDM
+mkdir -p /mnt/target/usr/share/xsessions
+cat << 'I3_XSESSION' > /mnt/target/usr/share/xsessions/i3.desktop
+[Desktop Entry]
+Name=i3
+Comment=improved dynamic tiling window manager
+Exec=i3
+TryExec=i3
+Type=Application
+DesktopNames=i3
+Keywords=tiling;wm;windowmanager;window;manager;
+I3_XSESSION
+
+if [ ! -f /mnt/target/usr/share/xsessions/xfce.desktop ] && [ -f /mnt/target/usr/share/xsessions/xubuntu.desktop ]; then
+  cp /mnt/target/usr/share/xsessions/xubuntu.desktop /mnt/target/usr/share/xsessions/xfce.desktop
+fi
 
 rm -f /mnt/target/etc/skel/Desktop/Install*.desktop
 rm -f "/mnt/target/home/$NEW_USER/Desktop/Install"*.desktop 2>/dev/null || true
@@ -687,7 +976,7 @@ insmod ext2
 set root='hd0,msdos1'
 search --no-floppy --fs-uuid --set=root $UUID
 
-menuentry "Revenant OS V15.5 - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.0 (Build 17) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -696,7 +985,7 @@ menuentry "Revenant OS V15.5 - Agentic Linux" --class debian --class gnu-linux -
     initrd /boot/$INITRD
 }
 
-menuentry "Revenant OS V15.5 (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.0 (Build 17) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -720,11 +1009,11 @@ umount -l /mnt/target/dev 2>/dev/null || true
 umount -l /mnt/target 2>/dev/null || true
 
 echo "100"; echo "# Installation Complete!"
-) | zenity --progress --title="Installing Revenant OS V15.5" --text="Starting installation..." --percentage=0 --auto-close
+) | zenity --progress --title="Installing Revenant OS 1.0 (Build 17)" --text="Starting installation..." --percentage=0 --auto-close
 
 if [ -f "$LOG" ] && grep -iq "Installing for i386-pc platform" "$LOG"; then
   zenity --info --title="Success" \
-    --text="<b>Revenant OS V15.5 has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
+    --text="<b>Revenant OS 1.0 (Build 17) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
 else
   zenity --error --title="Error" \
     --text="An error occurred during installation. Check /tmp/revenant_install.log or the target drive."
@@ -752,12 +1041,12 @@ if background_image /boot/grub/splash.png; then
   set color_highlight=cyan/black
 fi
 
-menuentry "Revenant OS V15.5 - Agentic Core (Offline Local LLM)" {
+menuentry "Revenant OS 1.0 (Build 17) - Agentic Core (Offline Local LLM)" {
     linux /live/vmlinuz boot=live components quiet splash
     initrd /live/initrd.img
 }
 
-menuentry "Revenant OS V15.5 (Safe Graphics / Failsafe)" {
+menuentry "Revenant OS 1.0 (Build 17) (Safe Graphics / Failsafe)" {
     linux /live/vmlinuz boot=live components nomodeset
     initrd /live/initrd.img
 }
@@ -766,12 +1055,13 @@ EOF
 echo "[*] Packaging patched SquashFS (xz compression)..."
 mksquashfs "$PATCH_ROOT" "$WORKSPACE_DIR/image/live/filesystem.squashfs" -comp xz
 
-echo "[*] Building V15.5 ISO with hybrid bootloader..."
-grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="V15.5"
+echo "[*] Building 1.0 Build 17 ISO with hybrid bootloader..."
+grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.0"
 cp -f "$ISO_TARGET" "$ISO_ALIAS"
 
 echo "[*] Cleaning up workspace..."
 rm -rf "$WORKSPACE_DIR" "$PATCH_ROOT"
 
-echo "[*] Build Complete! Revenant OS V15.5 ISO ready at: $ISO_TARGET"
+echo "[*] Build Complete! Revenant OS 1.0 (Build 17) ISO ready at: $ISO_TARGET"
 ls -lh "$ISO_TARGET" "$ISO_ALIAS"
+
