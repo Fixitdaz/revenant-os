@@ -182,8 +182,26 @@ for cf in /etc/lightdm/lightdm.conf.d/*.conf /usr/share/lightdm/lightdm.conf.d/*
   fi
 done
 
-# Explicitly configure LightDM greeter to show user list and session picker
-mkdir -p /etc/lightdm/lightdm.conf.d
+# Explicitly configure LightDM greeter to show user list, session picker, and Revenant branding
+mkdir -p /etc/lightdm/lightdm.conf.d /etc/lightdm/lightdm-gtk-greeter.conf.d /usr/share/backgrounds /usr/share/images/desktop-base
+
+# Download or install Revenant wallpaper & boot splash if missing
+if [ ! -f /usr/share/backgrounds/revenant_bootsplash.png ] || [ "$FORCE" = true ]; then
+  curl -fsSL -o /usr/share/backgrounds/revenant_bootsplash.png \
+    "https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/$TARGET_BRANCH/revenant_bootsplash.png" 2>/dev/null || true
+fi
+if [ ! -f /usr/share/backgrounds/revenant_wallpaper.jpg ] || [ "$FORCE" = true ]; then
+  curl -fsSL -o /usr/share/backgrounds/revenant_wallpaper.jpg \
+    "https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/$TARGET_BRANCH/revenant_wallpaper.jpg" 2>/dev/null || true
+fi
+
+# Override Debian desktop-base symlinks and login backgrounds with Revenant artwork
+if [ -f /usr/share/backgrounds/revenant_bootsplash.png ]; then
+  cp -f /usr/share/backgrounds/revenant_bootsplash.png /usr/share/images/desktop-base/desktop-background 2>/dev/null || true
+  cp -f /usr/share/backgrounds/revenant_bootsplash.png /usr/share/images/desktop-base/login-background.svg 2>/dev/null || true
+  cp -f /usr/share/backgrounds/revenant_bootsplash.png /boot/grub/splash.png 2>/dev/null || true
+fi
+
 cat << 'GREETER_EOF' > /etc/lightdm/lightdm.conf.d/01-revenant-greeter.conf
 [Seat:*]
 autologin-user=
@@ -193,6 +211,30 @@ greeter-hide-users=false
 greeter-show-manual-login=true
 user-session=xfce
 GREETER_EOF
+
+cat << 'GREETER_CONF_EOF' > /etc/lightdm/lightdm-gtk-greeter.conf.d/01-revenant.conf
+[greeter]
+background = /usr/share/backgrounds/revenant_bootsplash.png
+theme-name = Adwaita-dark
+icon-theme-name = Papirus-Dark
+cursor-theme-name = Adwaita
+font-name = Sans 10
+xft-antialias = true
+xft-dpi = 96
+xft-hintstyle = slight
+xft-rgba = rgb
+indicators = ~host;~spacer;~clock;~spacer;~session;~power
+clock-format = %a, %d %b  %H:%M
+default-user-image = #avatar-default
+hide-user-image = false
+GREETER_CONF_EOF
+
+# Remove any vendor Debian logo overrides in lightdm-gtk-greeter.conf
+if [ -f /etc/lightdm/lightdm-gtk-greeter.conf ]; then
+  sed -i -E 's/^[[:space:]]*logo[[:space:]]*=.*/#logo=/' /etc/lightdm/lightdm-gtk-greeter.conf 2>/dev/null || true
+  sed -i -E 's/^[[:space:]]*background[[:space:]]*=.*/background=\/usr\/share\/backgrounds\/revenant_bootsplash.png/' /etc/lightdm/lightdm-gtk-greeter.conf 2>/dev/null || true
+  sed -i -E 's/^[[:space:]]*default-user-image[[:space:]]*=.*/default-user-image=#avatar-default/' /etc/lightdm/lightdm-gtk-greeter.conf 2>/dev/null || true
+fi
 
 # Ensure registered session files exist for both XFCE and i3 in LightDM
 mkdir -p /usr/share/xsessions
@@ -371,6 +413,17 @@ sed -i '/OPENAI_API_KEY/d' /etc/environment 2>/dev/null || true
 echo 'OPENAI_API_BASE="http://127.0.0.1:8080/v1"' >> /etc/environment
 echo 'OPENAI_API_KEY="sk-local-revenant"' >> /etc/environment
 
+# Purge OmniRoute and decommission cloud proxy services
+echo -e "${CYAN}  -> Decommissioning OmniRoute cloud proxy & reclaiming RAM...${RESET}"
+systemctl stop omniroute.service 2>/dev/null || true
+systemctl disable omniroute.service 2>/dev/null || true
+rm -f /etc/systemd/system/omniroute.service
+pkill -9 -f omniroute 2>/dev/null || true
+npm uninstall -g omniroute 2>/dev/null || true
+rm -f /usr/local/bin/omniroute /usr/bin/omniroute
+ufw delete allow 20128/tcp 2>/dev/null || true
+echo -e "${GREEN}[✓] OmniRoute purged: port 20128 closed, service removed, RAM reclaimed.${RESET}"
+
 # Purge Hermes Agent and stop any background Hermes processes
 echo -e "${CYAN}  -> Decommissioning resource-heavy Hermes Agent & stopping background tasks...${RESET}"
 pkill -9 -f hermes 2>/dev/null || true
@@ -381,8 +434,8 @@ for uh in /root /etc/skel /home/*; do
 done
 echo -e "${GREEN}[✓] Hermes Agent purged. System resources restored to CPU & RAM.${RESET}"
 
-# Install Revenant Custom Agent (Ultra-fast CPU-optimized autonomous agent)
-echo -e "${CYAN}  -> Deploying Revenant Custom Agent (/usr/local/bin/revenant-agent)...${RESET}"
+# Install Revenant Custom Agent (Ultra-fast CPU-optimized autonomous agent with Voice I/O)
+echo -e "${CYAN}  -> Deploying Revenant Custom Agent with Voice I/O (/usr/local/bin/revenant-agent)...${RESET}"
 cat << 'AGENT_EOF' > /usr/local/bin/revenant-agent
 #!/usr/bin/env python3
 # ==============================================================================
@@ -420,6 +473,51 @@ def speak_text(text):
     if clean:
         cmd = f"echo '{clean}' | /opt/piper/piper -m /opt/piper/models/en_US-lessac-medium.onnx --output_raw 2>/dev/null | aplay -r 22050 -f S16_LE -t raw - 2>/dev/null"
         subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+def record_voice(duration=5, output_wav="/tmp/revenant_voice.wav"):
+    """Record audio from Toughbook microphone using arecord (16kHz 16-bit mono for Whisper)."""
+    try:
+        if os.path.exists(output_wav):
+            os.remove(output_wav)
+        print(f"\n{YELLOW}🎙️  [Listening... Speak into microphone ({duration}s)...]{RESET}")
+        cmd = f"arecord -q -d {duration} -r 16000 -c 1 -f S16_LE '{output_wav}'"
+        subprocess.run(cmd, shell=True, check=True)
+        return os.path.exists(output_wav)
+    except Exception as e:
+        print(f"{RED}[!] Audio record error: {e}{RESET}")
+        return False
+
+def transcribe_voice(wav_path="/tmp/revenant_voice.wav"):
+    """Transcribe audio locally using whisper.cpp (ggml-tiny.en)."""
+    if not os.path.exists(wav_path):
+        return ""
+    whisper_bin = "/opt/whisper/whisper-cli"
+    model_path = "/opt/whisper/models/ggml-tiny.en.bin"
+    
+    print(f"{CYAN}⚡ [Transcribing voice with local Whisper STT...]{RESET}")
+    if os.path.exists(whisper_bin) and os.path.exists(model_path):
+        try:
+            proc = subprocess.run(
+                [whisper_bin, "-m", model_path, "-f", wav_path, "--no-timestamps", "-nt"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30
+            )
+            raw = proc.stdout.strip()
+            clean = re.sub(r'\[.*?\]', '', raw).strip()
+            return clean
+        except Exception as e:
+            print(f"{RED}[!] Whisper error: {e}{RESET}")
+    
+    # Fallback to python pywhispercpp if installed
+    try:
+        from pywhispercpp.model import Model
+        m = Model('tiny.en', models_dir='/opt/whisper/models')
+        segs = m.transcribe(wav_path)
+        return " ".join([s.text for s in segs]).strip()
+    except Exception:
+        pass
+
+    print(f"{YELLOW}[!] Whisper STT not ready. Run 'sudo revenant-update' to install.{RESET}")
+    return ""
 
 def get_system_telemetry():
     telemetry = []
@@ -538,7 +636,7 @@ def call_local_model(messages, max_tokens=384):
     print()
     return "".join(collected)
 
-def run_agent_loop():
+def run_agent_loop(initial_prompt=None):
     global VOICE_ENABLED
     os.system('clear')
     print(f"{CYAN}{BOLD}=========================================================={RESET}")
@@ -547,18 +645,24 @@ def run_agent_loop():
     telem = get_system_telemetry()
     if telem:
         print(f"{DIM}{telem}{RESET}")
-    print(f"{DIM}Commands: /clear (reset memory) | /voice (toggle speech) | /sys | exit{RESET}\n")
+    print(f"{DIM}Commands: /mic (voice input) | /voice (toggle speech) | /sys | /clear | exit{RESET}\n")
 
     history = [
         {"role": "system", "content": SYSTEM_PROMPT}
     ]
 
+    pending_user_input = initial_prompt
+
     while True:
-        try:
-            user_input = input(f"{GREEN}{BOLD}revenant ❯ {RESET}").strip()
-        except (KeyboardInterrupt, EOFError):
-            print(f"\n{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
-            break
+        if pending_user_input:
+            user_input = pending_user_input
+            pending_user_input = None
+        else:
+            try:
+                user_input = input(f"{GREEN}{BOLD}revenant ❯ {RESET}").strip()
+            except (KeyboardInterrupt, EOFError):
+                print(f"\n{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
+                break
 
         if not user_input:
             continue
@@ -566,6 +670,17 @@ def run_agent_loop():
         if user_input.lower() in ('exit', 'quit', ':q'):
             print(f"{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
             break
+        elif user_input.lower() in ('/mic', '/talk', '/listen'):
+            if record_voice(duration=5):
+                transcript = transcribe_voice()
+                if transcript:
+                    print(f"{GREEN}{BOLD}You (Voice):{RESET} {transcript}\n")
+                    user_input = transcript
+                else:
+                    print(f"{YELLOW}[No speech detected or transcription empty]{RESET}\n")
+                    continue
+            else:
+                continue
         elif user_input == '/clear':
             history = [{"role": "system", "content": SYSTEM_PROMPT}]
             print(f"{GREEN}[✓] Conversation memory cleared.{RESET}\n")
@@ -613,7 +728,18 @@ def run_agent_loop():
             print(f"\n{RED}[!] Agent Error: {e}{RESET}\n")
 
 if __name__ == '__main__':
-    run_agent_loop()
+    initial = None
+    if len(sys.argv) > 1:
+        if sys.argv[1] in ('--mic', '-m', '--voice'):
+            VOICE_ENABLED = True
+            if record_voice(duration=5):
+                t = transcribe_voice()
+                if t:
+                    print(f"\033[92m\033[1mYou (Voice):\033[0m {t}\n")
+                    initial = t
+        else:
+            initial = " ".join(sys.argv[1:])
+    run_agent_loop(initial_prompt=initial)
 AGENT_EOF
 chmod +x /usr/local/bin/revenant-agent
 echo -e "${GREEN}[✓] Revenant Custom Agent installed to /usr/local/bin/revenant-agent.${RESET}"
@@ -623,17 +749,35 @@ echo ""
 echo -e "${CYAN}${BOLD}[3/5] Updating Universal Terminal AI Command (/usr/local/bin/ai)...${RESET}"
 cat << 'PYEOF' > /usr/local/bin/ai
 #!/usr/bin/env python3
-import sys, json, urllib.request, subprocess
+import sys, os, json, urllib.request, subprocess, re
 
 if len(sys.argv) < 2:
     # If no arguments provided, launch interactive Revenant Custom Agent
     if os.path.exists("/usr/local/bin/revenant-agent"):
         os.execv("/usr/local/bin/revenant-agent", ["revenant-agent"])
     print("\033[93mUsage: ai <your question or command>\033[0m")
+    print("       ai --mic (voice input via microphone)")
     print("Runs 100% locally via Qwen2.5-Coder on llama-server (port 8080).")
     sys.exit(1)
 
-prompt = " ".join(sys.argv[1:])
+prompt = ""
+if sys.argv[1] in ("--mic", "-m", "--voice"):
+    print("\033[93m🎙️  [Listening... Speak your question into the microphone (5s)...]\033[0m")
+    wav = "/tmp/revenant_ai_voice.wav"
+    subprocess.run(f"arecord -q -d 5 -r 16000 -c 1 -f S16_LE '{wav}'", shell=True)
+    whisper_bin = "/opt/whisper/whisper-cli"
+    model = "/opt/whisper/models/ggml-tiny.en.bin"
+    if os.path.exists(whisper_bin) and os.path.exists(model):
+        proc = subprocess.run([whisper_bin, "-m", model, "-f", wav, "--no-timestamps", "-nt"], stdout=subprocess.PIPE, text=True)
+        raw = proc.stdout.strip()
+        prompt = re.sub(r'\[.*?\]', '', raw).strip()
+    if not prompt:
+        print("\033[91m[!] No speech detected or Whisper not ready.\033[0m")
+        sys.exit(1)
+    print(f"\033[92m\033[1mVoice Query:\033[0m {prompt}\n")
+else:
+    prompt = " ".join(sys.argv[1:])
+
 print("\033[96m[Revenant Core: Local Qwen2.5 Thinking (Offline Toughbook CPU)...]\033[0m\n")
 
 payload = json.dumps({
@@ -866,6 +1010,45 @@ if [ ! -f /opt/piper/models/en_US-lessac-medium.onnx ]; then
 fi
 echo -e "${GREEN}[✓] Offline neural speech synthesis verified.${RESET}"
 
+# TIER 4.5: Offline Speech-to-Text (Whisper STT)
+echo ""
+echo -e "${CYAN}${BOLD}[*] Configuring Offline Neural Speech-to-Text (Whisper STT)...${RESET}"
+mkdir -p /opt/whisper/models
+
+# Download Whisper ggml-tiny.en model (~75MB)
+if [ ! -f /opt/whisper/models/ggml-tiny.en.bin ] || [ "$FORCE" = true ]; then
+  echo -e "${CYAN}  -> Downloading Whisper ggml-tiny.en model (~75MB)...${RESET}"
+  curl -L --progress-bar -o /opt/whisper/models/ggml-tiny.en.bin \
+    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin || true
+fi
+
+# Build or install whisper-cli binary
+if [ ! -f /opt/whisper/whisper-cli ] || [ "$FORCE" = true ]; then
+  echo -e "${CYAN}  -> Compiling whisper-cli for Toughbook CPU...${RESET}"
+  mkdir -p /tmp/whisper_build
+  if curl -fsSL -o /tmp/whisper_build/whisper.tar.gz https://github.com/ggerganov/whisper.cpp/archive/refs/tags/v1.7.4.tar.gz; then
+    tar -xzf /tmp/whisper_build/whisper.tar.gz -C /tmp/whisper_build/
+    cd /tmp/whisper_build/whisper.cpp-1.7.4
+    make -j2 whisper-cli 2>/dev/null || cmake -B build && cmake --build build -j2 --target whisper-cli 2>/dev/null || true
+    if [ -f whisper-cli ]; then
+      cp whisper-cli /opt/whisper/whisper-cli
+    elif [ -f build/bin/whisper-cli ]; then
+      cp build/bin/whisper-cli /opt/whisper/whisper-cli
+    elif [ -f main ]; then
+      cp main /opt/whisper/whisper-cli
+    fi
+    chmod +x /opt/whisper/whisper-cli 2>/dev/null || true
+    cd /
+    rm -rf /tmp/whisper_build
+  fi
+fi
+
+# Ensure alsa-utils (arecord/aplay) is installed
+if ! command -v arecord >/dev/null 2>&1; then
+  apt-get install -y --no-install-recommends alsa-utils 2>/dev/null || true
+fi
+echo -e "${GREEN}[✓] Whisper offline speech-to-text verified in /opt/whisper.${RESET}"
+
 # TIER 5: Upstream Security & Drivers
 echo ""
 echo -e "${CYAN}${BOLD}[5/5] Checking Hardware Drivers & Security Patches...${RESET}"
@@ -923,8 +1106,8 @@ echo -e "${GREEN}[✓] Security packages and hardware profiles synchronized.${RE
 # Update GRUB boot menu title to display current release
 if [ -f /boot/grub/grub.cfg ]; then
   echo -e "${CYAN}[*] Updating GRUB bootloader menu title...${RESET}"
-  sed -i -E 's/Revenant OS (V[0-9.]+|[0-9.]+ \(Build [0-9.]+\))/Revenant OS 1.0 (Build 17)/g' /boot/grub/grub.cfg 2>/dev/null || true
-  echo -e "${GREEN}[✓] GRUB bootloader title updated to Revenant OS 1.0 (Build 17).${RESET}"
+  sed -i -E "s/Revenant OS (V[0-9.]+|[0-9.]+ \(Build [0-9.]+(\s*Beta)?\))/Revenant OS $REMOTE_VER (Build $REMOTE_BUILD)/g" /boot/grub/grub.cfg 2>/dev/null || true
+  echo -e "${GREEN}[✓] GRUB bootloader title updated to Revenant OS $REMOTE_VER (Build $REMOTE_BUILD).${RESET}"
 fi
 
 cat << EOF > "$LOCAL_VERSION_FILE"
@@ -933,6 +1116,7 @@ cat << EOF > "$LOCAL_VERSION_FILE"
   "channel": "$CHANNEL",
   "version": "$REMOTE_VER",
   "build": "$REMOTE_BUILD",
+  "display": "Revenant OS $REMOTE_VER (Build $REMOTE_BUILD)",
   "local_inference": {
     "engine": "llama-server",
     "model": "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
@@ -940,7 +1124,9 @@ cat << EOF > "$LOCAL_VERSION_FILE"
     "context_size": 4096
   },
   "agent_core": {
-    "revenant_agent": "native",
+    "revenant_agent": "native-voice-enabled",
+    "whisper_stt": "whisper.cpp-tiny.en",
+    "piper_tts": "2023.11.14-2",
     "open_interpreter": "latest",
     "openviking": "active"
   },

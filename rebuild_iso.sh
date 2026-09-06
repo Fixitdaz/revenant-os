@@ -7,10 +7,10 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_DIR="/var/tmp/toughbook_rebuild_1_0"
-PATCH_ROOT="/var/tmp/patch_root_1_0"
+WORKSPACE_DIR="/var/tmp/toughbook_rebuild_1_1"
+PATCH_ROOT="/var/tmp/patch_root_1_1"
 ISO_SOURCE="$SCRIPT_DIR/revenant_os_toughbook_v15_5.iso"
-ISO_TARGET="$SCRIPT_DIR/revenant_os_1.0_build17.iso"
+ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build18_beta.iso"
 ISO_ALIAS="$SCRIPT_DIR/revenant_os_latest.iso"
 CACHE_DIR="/var/tmp/revenant_cache"
 
@@ -23,7 +23,7 @@ umount "$PATCH_ROOT/dev" 2>/dev/null || true
 rm -rf "$WORKSPACE_DIR" "$PATCH_ROOT"
 mkdir -p "$CACHE_DIR"
 
-echo "[*] Mounting V15.4 source ISO..."
+echo "[*] Mounting source ISO..."
 mkdir -p /mnt/iso
 mount -o loop,ro "$ISO_SOURCE" /mnt/iso
 
@@ -34,7 +34,9 @@ echo "[*] Setting up ISO base image tree..."
 mkdir -p "$WORKSPACE_DIR/image/live" "$WORKSPACE_DIR/image/boot/grub"
 cp /mnt/iso/live/vmlinuz "$WORKSPACE_DIR/image/live/vmlinuz"
 cp /mnt/iso/live/initrd.img "$WORKSPACE_DIR/image/live/initrd.img"
-if [ -f /mnt/iso/boot/grub/splash.png ]; then
+if [ -f "$SCRIPT_DIR/revenant_bootsplash.png" ]; then
+  cp "$SCRIPT_DIR/revenant_bootsplash.png" "$WORKSPACE_DIR/image/boot/grub/splash.png"
+elif [ -f /mnt/iso/boot/grub/splash.png ]; then
   cp /mnt/iso/boot/grub/splash.png "$WORKSPACE_DIR/image/boot/grub/splash.png"
 fi
 
@@ -163,12 +165,52 @@ CONFIG_RD_LZ4=y
 CONFIG_RD_ZSTD=y
 CFG_EOF
 
-echo "[*] Purging Hermes Agent & deploying Revenant Custom Agent..."
+echo "[*] Purging OmniRoute and Hermes Agent..."
+rm -f "$PATCH_ROOT/etc/systemd/system/omniroute.service"
+rm -f "$PATCH_ROOT/usr/local/bin/omniroute" "$PATCH_ROOT/usr/bin/omniroute"
 rm -f "$PATCH_ROOT/usr/local/bin/hermes" "$PATCH_ROOT/usr/bin/hermes"
-rm -rf "$PATCH_ROOT/usr/lib/node_modules/hermes-agent"
+rm -rf "$PATCH_ROOT/usr/lib/node_modules/hermes-agent" "$PATCH_ROOT/usr/lib/node_modules/omniroute"
 for target_dir in "$PATCH_ROOT/root/.hermes" "$PATCH_ROOT/etc/skel/.hermes" "$PATCH_ROOT/home/user/.hermes" "$PATCH_ROOT/home/revenant/.hermes"; do
   rm -rf "$target_dir"
 done
+
+echo "[*] Configuring LightDM login screen branding & de-branding Debian..."
+mkdir -p "$PATCH_ROOT/usr/share/backgrounds" "$PATCH_ROOT/usr/share/images/desktop-base" "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf.d"
+if [ -f "$SCRIPT_DIR/revenant_bootsplash.png" ]; then
+  cp -f "$SCRIPT_DIR/revenant_bootsplash.png" "$PATCH_ROOT/usr/share/backgrounds/revenant_bootsplash.png"
+  cp -f "$SCRIPT_DIR/revenant_bootsplash.png" "$PATCH_ROOT/usr/share/images/desktop-base/desktop-background"
+  cp -f "$SCRIPT_DIR/revenant_bootsplash.png" "$PATCH_ROOT/usr/share/images/desktop-base/login-background.svg"
+  cp -f "$SCRIPT_DIR/revenant_bootsplash.png" "$PATCH_ROOT/boot/grub/splash.png" 2>/dev/null || true
+fi
+if [ -f "$SCRIPT_DIR/revenant_wallpaper.jpg" ]; then
+  cp -f "$SCRIPT_DIR/revenant_wallpaper.jpg" "$PATCH_ROOT/usr/share/backgrounds/revenant_wallpaper.jpg"
+fi
+
+cat << 'GREETER_CONF_EOF' > "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf.d/01-revenant.conf"
+[greeter]
+background = /usr/share/backgrounds/revenant_bootsplash.png
+theme-name = Adwaita-dark
+icon-theme-name = Papirus-Dark
+cursor-theme-name = Adwaita
+font-name = Sans 10
+xft-antialias = true
+xft-dpi = 96
+xft-hintstyle = slight
+xft-rgba = rgb
+indicators = ~host;~spacer;~clock;~spacer;~session;~power
+clock-format = %a, %d %b  %H:%M
+default-user-image = #avatar-default
+hide-user-image = false
+GREETER_CONF_EOF
+
+if [ -f "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf" ]; then
+  sed -i -E 's/^[[:space:]]*logo[[:space:]]*=.*/#logo=/' "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf" 2>/dev/null || true
+  sed -i -E 's/^[[:space:]]*background[[:space:]]*=.*/background=\/usr\/share\/backgrounds\/revenant_bootsplash.png/' "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf" 2>/dev/null || true
+  sed -i -E 's/^[[:space:]]*default-user-image[[:space:]]*=.*/default-user-image=#avatar-default/' "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf" 2>/dev/null || true
+fi
+
+echo "[*] Setting up Whisper STT and deploying voice-enabled Revenant Custom Agent..."
+mkdir -p "$PATCH_ROOT/opt/whisper/models"
 
 cat << 'AGENT_EOF' > "$PATCH_ROOT/usr/local/bin/revenant-agent"
 #!/usr/bin/env python3
@@ -207,6 +249,51 @@ def speak_text(text):
     if clean:
         cmd = f"echo '{clean}' | /opt/piper/piper -m /opt/piper/models/en_US-lessac-medium.onnx --output_raw 2>/dev/null | aplay -r 22050 -f S16_LE -t raw - 2>/dev/null"
         subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+def record_voice(duration=5, output_wav="/tmp/revenant_voice.wav"):
+    """Record audio from Toughbook microphone using arecord (16kHz 16-bit mono for Whisper)."""
+    try:
+        if os.path.exists(output_wav):
+            os.remove(output_wav)
+        print(f"\n{YELLOW}🎙️  [Listening... Speak into microphone ({duration}s)...]{RESET}")
+        cmd = f"arecord -q -d {duration} -r 16000 -c 1 -f S16_LE '{output_wav}'"
+        subprocess.run(cmd, shell=True, check=True)
+        return os.path.exists(output_wav)
+    except Exception as e:
+        print(f"{RED}[!] Audio record error: {e}{RESET}")
+        return False
+
+def transcribe_voice(wav_path="/tmp/revenant_voice.wav"):
+    """Transcribe audio locally using whisper.cpp (ggml-tiny.en)."""
+    if not os.path.exists(wav_path):
+        return ""
+    whisper_bin = "/opt/whisper/whisper-cli"
+    model_path = "/opt/whisper/models/ggml-tiny.en.bin"
+    
+    print(f"{CYAN}⚡ [Transcribing voice with local Whisper STT...]{RESET}")
+    if os.path.exists(whisper_bin) and os.path.exists(model_path):
+        try:
+            proc = subprocess.run(
+                [whisper_bin, "-m", model_path, "-f", wav_path, "--no-timestamps", "-nt"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30
+            )
+            raw = proc.stdout.strip()
+            clean = re.sub(r'\[.*?\]', '', raw).strip()
+            return clean
+        except Exception as e:
+            print(f"{RED}[!] Whisper error: {e}{RESET}")
+    
+    # Fallback to python pywhispercpp if installed
+    try:
+        from pywhispercpp.model import Model
+        m = Model('tiny.en', models_dir='/opt/whisper/models')
+        segs = m.transcribe(wav_path)
+        return " ".join([s.text for s in segs]).strip()
+    except Exception:
+        pass
+
+    print(f"{YELLOW}[!] Whisper STT not ready. Run 'sudo revenant-update' to install.{RESET}")
+    return ""
 
 def get_system_telemetry():
     telemetry = []
@@ -325,7 +412,7 @@ def call_local_model(messages, max_tokens=384):
     print()
     return "".join(collected)
 
-def run_agent_loop():
+def run_agent_loop(initial_prompt=None):
     global VOICE_ENABLED
     os.system('clear')
     print(f"{CYAN}{BOLD}=========================================================={RESET}")
@@ -334,18 +421,24 @@ def run_agent_loop():
     telem = get_system_telemetry()
     if telem:
         print(f"{DIM}{telem}{RESET}")
-    print(f"{DIM}Commands: /clear (reset memory) | /voice (toggle speech) | /sys | exit{RESET}\n")
+    print(f"{DIM}Commands: /mic (voice input) | /voice (toggle speech) | /sys | /clear | exit{RESET}\n")
 
     history = [
         {"role": "system", "content": SYSTEM_PROMPT}
     ]
 
+    pending_user_input = initial_prompt
+
     while True:
-        try:
-            user_input = input(f"{GREEN}{BOLD}revenant ❯ {RESET}").strip()
-        except (KeyboardInterrupt, EOFError):
-            print(f"\n{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
-            break
+        if pending_user_input:
+            user_input = pending_user_input
+            pending_user_input = None
+        else:
+            try:
+                user_input = input(f"{GREEN}{BOLD}revenant ❯ {RESET}").strip()
+            except (KeyboardInterrupt, EOFError):
+                print(f"\n{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
+                break
 
         if not user_input:
             continue
@@ -353,6 +446,17 @@ def run_agent_loop():
         if user_input.lower() in ('exit', 'quit', ':q'):
             print(f"{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
             break
+        elif user_input.lower() in ('/mic', '/talk', '/listen'):
+            if record_voice(duration=5):
+                transcript = transcribe_voice()
+                if transcript:
+                    print(f"{GREEN}{BOLD}You (Voice):{RESET} {transcript}\n")
+                    user_input = transcript
+                else:
+                    print(f"{YELLOW}[No speech detected or transcription empty]{RESET}\n")
+                    continue
+            else:
+                continue
         elif user_input == '/clear':
             history = [{"role": "system", "content": SYSTEM_PROMPT}]
             print(f"{GREEN}[✓] Conversation memory cleared.{RESET}\n")
@@ -400,7 +504,18 @@ def run_agent_loop():
             print(f"\n{RED}[!] Agent Error: {e}{RESET}\n")
 
 if __name__ == '__main__':
-    run_agent_loop()
+    initial = None
+    if len(sys.argv) > 1:
+        if sys.argv[1] in ('--mic', '-m', '--voice'):
+            VOICE_ENABLED = True
+            if record_voice(duration=5):
+                t = transcribe_voice()
+                if t:
+                    print(f"\033[92m\033[1mYou (Voice):\033[0m {t}\n")
+                    initial = t
+        else:
+            initial = " ".join(sys.argv[1:])
+    run_agent_loop(initial_prompt=initial)
 AGENT_EOF
 chmod +x "$PATCH_ROOT/usr/local/bin/revenant-agent"
 
@@ -418,19 +533,38 @@ INTERP_CFG
 done
 chown -R 1001:1001 "$PATCH_ROOT/home/user/.config" 2>/dev/null || true
 chown -R 1000:1000 "$PATCH_ROOT/home/revenant/.config" 2>/dev/null || true
-echo "[*] Installing streaming /usr/local/bin/ai CLI (real-time tokens, no timeout)..."
+
+echo "[*] Installing streaming /usr/local/bin/ai CLI with voice input support..."
 cat << 'PYEOF' > "$PATCH_ROOT/usr/local/bin/ai"
 #!/usr/bin/env python3
-import sys, json, urllib.request, subprocess
+import sys, os, json, urllib.request, subprocess, re
 
 if len(sys.argv) < 2:
     if os.path.exists("/usr/local/bin/revenant-agent"):
         os.execv("/usr/local/bin/revenant-agent", ["revenant-agent"])
     print("\033[93mUsage: ai <your question or command>\033[0m")
+    print("       ai --mic (voice input via microphone)")
     print("Runs 100% locally via Qwen2.5-Coder on llama-server (port 8080).")
     sys.exit(1)
 
-prompt = " ".join(sys.argv[1:])
+prompt = ""
+if sys.argv[1] in ("--mic", "-m", "--voice"):
+    print("\033[93m🎙️  [Listening... Speak your query into the microphone (5s)...]\033[0m")
+    wav = "/tmp/revenant_ai_voice.wav"
+    subprocess.run(f"arecord -q -d 5 -r 16000 -c 1 -f S16_LE '{wav}'", shell=True)
+    whisper_bin = "/opt/whisper/whisper-cli"
+    model = "/opt/whisper/models/ggml-tiny.en.bin"
+    if os.path.exists(whisper_bin) and os.path.exists(model):
+        proc = subprocess.run([whisper_bin, "-m", model, "-f", wav, "--no-timestamps", "-nt"], stdout=subprocess.PIPE, text=True)
+        raw = proc.stdout.strip()
+        prompt = re.sub(r'\[.*?\]', '', raw).strip()
+    if not prompt:
+        print("\033[91m[!] No speech detected or Whisper not ready.\033[0m")
+        sys.exit(1)
+    print(f"\033[92m\033[1mVoice Query:\033[0m {prompt}\n")
+else:
+    prompt = " ".join(sys.argv[1:])
+
 print("\033[96m[Revenant Core: Local Qwen2.5 Thinking (Offline Toughbook CPU)...]\033[0m\n")
 
 payload = json.dumps({
@@ -872,6 +1006,30 @@ greeter-show-manual-login=true
 user-session=xfce
 GREETER_EOF
 
+mkdir -p /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf.d
+cat << 'GREETER_CONF_EOF' > /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf.d/01-revenant.conf
+[greeter]
+background = /usr/share/backgrounds/revenant_bootsplash.png
+theme-name = Adwaita-dark
+icon-theme-name = Papirus-Dark
+cursor-theme-name = Adwaita
+font-name = Sans 10
+xft-antialias = true
+xft-dpi = 96
+xft-hintstyle = slight
+xft-rgba = rgb
+indicators = ~host;~spacer;~clock;~spacer;~session;~power
+clock-format = %a, %d %b  %H:%M
+default-user-image = #avatar-default
+hide-user-image = false
+GREETER_CONF_EOF
+
+if [ -f /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf ]; then
+  sed -i -E 's/^[[:space:]]*logo[[:space:]]*=.*/#logo=/' /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf 2>/dev/null || true
+  sed -i -E 's/^[[:space:]]*background[[:space:]]*=.*/background=\/usr\/share\/backgrounds\/revenant_bootsplash.png/' /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf 2>/dev/null || true
+  sed -i -E 's/^[[:space:]]*default-user-image[[:space:]]*=.*/default-user-image=#avatar-default/' /mnt/target/etc/lightdm/lightdm-gtk-greeter.conf 2>/dev/null || true
+fi
+
 # Ensure registered session files exist for both XFCE and i3 in LightDM
 mkdir -p /mnt/target/usr/share/xsessions
 cat << 'I3_XSESSION' > /mnt/target/usr/share/xsessions/i3.desktop
@@ -976,7 +1134,7 @@ insmod ext2
 set root='hd0,msdos1'
 search --no-floppy --fs-uuid --set=root $UUID
 
-menuentry "Revenant OS 1.0 (Build 17) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 18 Beta) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -985,7 +1143,7 @@ menuentry "Revenant OS 1.0 (Build 17) - Agentic Linux" --class debian --class gn
     initrd /boot/$INITRD
 }
 
-menuentry "Revenant OS 1.0 (Build 17) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 18 Beta) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -1009,11 +1167,11 @@ umount -l /mnt/target/dev 2>/dev/null || true
 umount -l /mnt/target 2>/dev/null || true
 
 echo "100"; echo "# Installation Complete!"
-) | zenity --progress --title="Installing Revenant OS 1.0 (Build 17)" --text="Starting installation..." --percentage=0 --auto-close
+) | zenity --progress --title="Installing Revenant OS 1.1 (Build 18 Beta)" --text="Starting installation..." --percentage=0 --auto-close
 
 if [ -f "$LOG" ] && grep -iq "Installing for i386-pc platform" "$LOG"; then
   zenity --info --title="Success" \
-    --text="<b>Revenant OS 1.0 (Build 17) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
+    --text="<b>Revenant OS 1.1 (Build 18 Beta) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
 else
   zenity --error --title="Error" \
     --text="An error occurred during installation. Check /tmp/revenant_install.log or the target drive."
@@ -1041,12 +1199,12 @@ if background_image /boot/grub/splash.png; then
   set color_highlight=cyan/black
 fi
 
-menuentry "Revenant OS 1.0 (Build 17) - Agentic Core (Offline Local LLM)" {
+menuentry "Revenant OS 1.1 (Build 18 Beta) - Agentic Core (Offline Voice + Local LLM)" {
     linux /live/vmlinuz boot=live components quiet splash
     initrd /live/initrd.img
 }
 
-menuentry "Revenant OS 1.0 (Build 17) (Safe Graphics / Failsafe)" {
+menuentry "Revenant OS 1.1 (Build 18 Beta) (Safe Graphics / Failsafe)" {
     linux /live/vmlinuz boot=live components nomodeset
     initrd /live/initrd.img
 }
@@ -1055,13 +1213,13 @@ EOF
 echo "[*] Packaging patched SquashFS (xz compression)..."
 mksquashfs "$PATCH_ROOT" "$WORKSPACE_DIR/image/live/filesystem.squashfs" -comp xz
 
-echo "[*] Building 1.0 Build 17 ISO with hybrid bootloader..."
-grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.0"
+echo "[*] Building 1.1 Build 18 Beta ISO with hybrid bootloader..."
+grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1"
 cp -f "$ISO_TARGET" "$ISO_ALIAS"
 
 echo "[*] Cleaning up workspace..."
 rm -rf "$WORKSPACE_DIR" "$PATCH_ROOT"
 
-echo "[*] Build Complete! Revenant OS 1.0 (Build 17) ISO ready at: $ISO_TARGET"
+echo "[*] Build Complete! Revenant OS 1.1 (Build 18 Beta) ISO ready at: $ISO_TARGET"
 ls -lh "$ISO_TARGET" "$ISO_ALIAS"
 

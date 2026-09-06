@@ -28,7 +28,6 @@
   - **Incoming**: Denied
   - **Outgoing**: Allowed
   - **SSH**: Allowed (`22/tcp`)
-  - **OmniRoute**: Local loopback only (`20128/tcp`)
 - Check status:
   ```bash
   sudo ufw status verbose

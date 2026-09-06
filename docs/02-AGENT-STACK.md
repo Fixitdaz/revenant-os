@@ -27,9 +27,10 @@ Revenant OS provides an instant command-line AI assistant accessible from any sh
 ```bash
 ai "How do I check battery capacity on this Toughbook?"
 ai "Write a bash one-liner to parse failed logins in /var/log/auth.log"
+ai --mic    # Record voice query via Toughbook microphone and transcribe with local Whisper
 ```
 - Sends the prompt to `http://127.0.0.1:8080/v1/chat/completions`.
-- Formats and displays the response directly in the terminal.
+- Formats and streams the response directly in the terminal with zero lag.
 - Automatically speaks the response aloud using the offline Piper neural TTS engine.
 
 ### 3. OpenViking Automated Context Database
@@ -45,7 +46,7 @@ ai "Write a bash one-liner to parse failed logins in /var/log/auth.log"
 ### 4. Autonomous Field Agents
 
 #### Revenant Custom Agent (`revenant-agent`)
-Revenant OS features a native, ultra-lightweight autonomous agent written in Python (`/usr/local/bin/revenant-agent`). Designed as a high-efficiency replacement for resource-heavy agent frameworks (such as Hermes), it operates with minimal token overhead and instant response times directly on Toughbook dual-core CPUs:
+Revenant OS features a native, ultra-lightweight autonomous agent written in Python (`/usr/local/bin/revenant-agent`). Designed as a high-efficiency replacement for resource-heavy agent frameworks, it operates with minimal token overhead and instant response times directly on Toughbook dual-core CPUs:
 
 - **Autonomous Tool Execution Loop**:
   - `[EXEC: bash_command]` — Proposes bash commands for inspection or execution (e.g., hardware checks, package queries, network status). Prompts the user with `Execute? [Y/n/edit]` before running.
@@ -58,6 +59,7 @@ Revenant OS features a native, ultra-lightweight autonomous agent written in Pyt
     `Battery: 85% | Temp: 42.0°C | RAM: 1420/3890MB`
 
 - **Interactive Commands**:
+  - `/mic` (or `/talk`, `/listen`) — Records 5 seconds of audio via Toughbook microphone and transcribes with local Whisper STT.
   - `/voice` — Toggles offline neural speech synthesis (Piper TTS) on or off in real time.
   - `/sys` — Executes instant Toughbook hardware and system diagnostics (`uname`, `uptime`, `free`, `df`, `sensors`).
   - `/clear` — Flushes conversation history back to the system prompt.
@@ -65,13 +67,14 @@ Revenant OS features a native, ultra-lightweight autonomous agent written in Pyt
 
 - **How to Launch**:
   ```bash
-  revenant-agent
+  revenant-agent          # Interactive text & voice shell
+  revenant-agent --mic    # Launch directly with microphone input prompt
   ```
   Or run `ai` with no arguments, or click the **"Revenant Autonomous Agent"** desktop icon.
 
 > [!NOTE]
-> **Hermes Agent Decommissioning**  
-> Prior builds experimented with Hermes Agent. However, Hermes enforced high context memory floors (>4,000 to 64,000 tokens) and background auxiliary models that saturated mobile CPU cores and triggered client timeouts. In Build 17, Hermes has been fully purged from the OS image and replaced with the native Revenant Custom Agent.
+> **Hermes & OmniRoute Decommissioning**  
+> Prior builds experimented with Hermes Agent and OmniRoute. However, Hermes enforced high context memory floors (>4,000 to 64,000 tokens) and background auxiliary models that saturated mobile CPU cores, while OmniRoute (a Node.js cloud proxy) consumed 120–250MB RAM unnecessary on a sovereign offline machine. In Build 18, both Hermes and OmniRoute have been fully purged from the OS image and firewall rules, saving ~350MB RAM and guaranteeing 100% offline local autonomy.
 
 #### OpenInterpreter Setup
 For multi-language code generation and automated script debugging, OpenInterpreter remains available and configured in `/etc/environment` pointing to `http://127.0.0.1:8080/v1`:
@@ -86,6 +89,8 @@ revenant-services
 ```
 Or double-click the **"Start AI Engine & Services"** icon on your desktop.
 
-### 6. Offline Neural Speech Synthesis (Piper TTS)
-- Pre-packaged neural voice model: `en_US-lessac-medium.onnx` located in `/opt/piper/models/`.
-- Fast, natural offline synthesis computed on CPU and streamed to ALSA audio.
+### 6. Full-Duplex Offline Voice System (Whisper STT + Piper TTS)
+Revenant OS Build 18 introduces a completely offline, two-way conversational voice loop:
+- **Speech-to-Text (STT)**: Powered by `whisper.cpp` using the quantized `ggml-tiny.en.bin` model (~75MB) in `/opt/whisper/models/`. Microphone audio is captured via ALSA `arecord` (16kHz 16-bit mono) and transcribed on CPU in under 1.5 seconds.
+- **Text-to-Speech (TTS)**: Powered by Piper with `en_US-lessac-medium.onnx` in `/opt/piper/models/`. Generates natural voice output streamed to ALSA `aplay`.
+- **Hands-Free Field Workflow**: Use `/mic` inside `revenant-agent` or run `ai --mic` to ask questions aloud in the field and hear the answer spoken back.
