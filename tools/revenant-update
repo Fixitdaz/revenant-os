@@ -88,15 +88,15 @@ if [ ! -f "$LOCAL_VERSION_FILE" ]; then
   cat << 'EOF' > "$LOCAL_VERSION_FILE"
 {
   "os_name": "Revenant OS",
-  "version": "1.0.0-rc15.9",
-  "build": "15.9",
+  "version": "1.0.0",
+  "build": "16",
   "release_date": "2026-09-06"
 }
 EOF
 fi
 
 CURRENT_VER=$(grep -oP '"version":\s*"\K[^"]+' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "1.0.0")
-CURRENT_BUILD=$(grep -oP '"build":\s*"?\K[0-9]+(\.[0-9]+)?' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "15.9")
+CURRENT_BUILD=$(grep -oP '"build":\s*"?\K[0-9]+(\.[0-9]+)?' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "16")
 
 echo -e "${CYAN}[*] Current Installed Version: ${BOLD}v$CURRENT_VER (Build $CURRENT_BUILD)${RESET}"
 echo -e "${CYAN}[*] Querying remote release manifest from GitHub...${RESET}"
@@ -214,7 +214,7 @@ StartLimitBurst=0
 [Service]
 Type=simple
 Environment=LD_LIBRARY_PATH=/opt/llama.cpp
-ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --alias qwen2.5-coder-1.5b-instruct --host 127.0.0.1 --port 8080 --ctx-size 2048 --threads 2 -np 1 --no-cache-prompt -sps 0 --n-gpu-layers 0
+ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --alias qwen2.5-coder-1.5b-instruct --host 127.0.0.1 --port 8080 --ctx-size 16384 --threads 2 -np 1 --no-cache-prompt -sps 0 --n-gpu-layers 0
 Restart=always
 RestartSec=5
 User=root
@@ -227,7 +227,7 @@ pkill -9 -f llama-server 2>/dev/null || true
 systemctl daemon-reload
 systemctl enable llama-server.service 2>/dev/null || true
 systemctl restart llama-server.service 2>/dev/null || true
-echo -e "${GREEN}[✓] Local inference server configured on http://127.0.0.1:8080/v1 (2K context, no-cache-prompt, zero stutter golden config)${RESET}"
+echo -e "${GREEN}[✓] Local inference server configured on http://127.0.0.1:8080/v1 (16K context, no-cache-prompt, zero stutter golden config)${RESET}"
 
 # Rewrite revenant-services desktop launcher script (fixes truncation bugs from V15.7 and earlier)
 echo -e "${CYAN}  -> Updating AI Engine desktop launcher script...${RESET}"
@@ -355,17 +355,17 @@ model:
   default: "qwen2.5-coder-1.5b-instruct"
   provider: "custom"
   base_url: "http://127.0.0.1:8080/v1"
-  context_length: 4096
+  context_length: 16384
 custom_providers:
   - name: "local"
     base_url: "http://127.0.0.1:8080/v1"
     models:
       qwen2.5-coder-1.5b-instruct:
-        context_length: 4096
+        context_length: 16384
 auxiliary:
   compression:
     model: "qwen2.5-coder-1.5b-instruct"
-    context_length: 4096
+    context_length: 16384
 toolsets:
   - "hermes-cli"
 HERMES_UPDATE_CFG
@@ -378,7 +378,7 @@ HERMES_UPDATE_ENV
   fi
 done
 
-echo -e "${GREEN}[✓] OpenViking memory daemon and Hermes 4K configuration synchronized.${RESET}"
+echo -e "${GREEN}[✓] OpenViking memory daemon and Hermes 16K configuration synchronized.${RESET}"
 
 # TIER 3: Universal 'ai' Command (Offline Local Integration)
 echo ""
@@ -666,8 +666,8 @@ echo -e "${GREEN}[✓] Security packages and hardware profiles synchronized.${RE
 # Update GRUB boot menu title to display current release
 if [ -f /boot/grub/grub.cfg ]; then
   echo -e "${CYAN}[*] Updating GRUB bootloader menu title...${RESET}"
-  sed -i -E 's/Revenant OS V[0-9.]+/Revenant OS V15.9/g' /boot/grub/grub.cfg 2>/dev/null || true
-  echo -e "${GREEN}[✓] GRUB bootloader title updated to Revenant OS V15.9.${RESET}"
+  sed -i -E 's/Revenant OS (V[0-9.]+|[0-9.]+ \(Build [0-9.]+\))/Revenant OS 1.0 (Build 16)/g' /boot/grub/grub.cfg 2>/dev/null || true
+  echo -e "${GREEN}[✓] GRUB bootloader title updated to Revenant OS 1.0 (Build 16).${RESET}"
 fi
 
 cat << EOF > "$LOCAL_VERSION_FILE"
@@ -679,7 +679,7 @@ cat << EOF > "$LOCAL_VERSION_FILE"
     "engine": "llama-server",
     "model": "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
     "port": 8080,
-    "context_size": 2048
+    "context_size": 16384
   },
   "agent_core": {
     "openviking": "active",

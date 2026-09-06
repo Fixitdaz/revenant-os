@@ -124,7 +124,7 @@ StartLimitBurst=0
 [Service]
 Type=simple
 Environment=LD_LIBRARY_PATH=/opt/llama.cpp
-ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --alias qwen2.5-coder-1.5b-instruct --host 127.0.0.1 --port 8080 --ctx-size 2048 --threads 2 -np 1 --no-cache-prompt -sps 0 --n-gpu-layers 0
+ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --alias qwen2.5-coder-1.5b-instruct --host 127.0.0.1 --port 8080 --ctx-size 16384 --threads 2 -np 1 --no-cache-prompt -sps 0 --n-gpu-layers 0
 Restart=always
 RestartSec=5
 User=root
@@ -178,17 +178,17 @@ model:
   default: "qwen2.5-coder-1.5b-instruct"
   provider: "custom"
   base_url: "http://127.0.0.1:8080/v1"
-  context_length: 4096
+  context_length: 16384
 custom_providers:
   - name: "local"
     base_url: "http://127.0.0.1:8080/v1"
     models:
       qwen2.5-coder-1.5b-instruct:
-        context_length: 4096
+        context_length: 16384
 auxiliary:
   compression:
     model: "qwen2.5-coder-1.5b-instruct"
-    context_length: 4096
+    context_length: 16384
 toolsets:
   - "hermes-cli"
 HERMES_CFG
