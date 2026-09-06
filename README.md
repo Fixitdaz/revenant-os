@@ -3,6 +3,7 @@
 > **Sovereign, Local-First Agentic AI Linux Operating System for Panasonic Toughbooks & Field Laptops**
 
 [![Build Status](https://img.shields.io/badge/build-1.1_Build_18.3_Stable-00f0ff?style=for-the-badge&logo=linux)](https://github.com/Fixitdaz/revenant-os/releases)
+[![Download ISO](https://img.shields.io/badge/SourceForge-Download_Full_ISO_(2.85GB)-orange?style=for-the-badge&logo=sourceforge)](https://sourceforge.net/projects/revenant-os/files/latest/download)
 [![Target](https://img.shields.io/badge/Hardware-Panasonic_Toughbook_CF--52-ff007f?style=for-the-badge&logo=panasonic)](https://github.com/Fixitdaz/revenant-os)
 [![Base](https://img.shields.io/badge/Kernel-Linux_6.1_Debian_Bookworm-purple?style=for-the-badge&logo=debian)](https://github.com/Fixitdaz/revenant-os)
 [![Local Engine](https://img.shields.io/badge/Local_LLM-Qwen2.5--Coder--1.5B_via_llama--server-brightgreen?style=for-the-badge)](https://github.com/Fixitdaz/revenant-os)
@@ -93,8 +94,10 @@ Instead of relying on mandatory cloud subscriptions, external API keys, or accou
 ## 🚀 Installation & Quick Start
 
 1. **Download the ISO**:
-   - Download [`revenant_os_1.1_build18.3.iso.001`](https://github.com/Fixitdaz/revenant-os/releases) and [`revenant_os_1.1_build18.3.iso.002`](https://github.com/Fixitdaz/revenant-os/releases) from [GitHub Releases](https://github.com/Fixitdaz/revenant-os/releases).
-   - Recombine the two files:
+   - **Direct Full ISO (Single-Click Download)**:
+     👉 [**Download `revenant_os_1.1_build18.3.iso` from SourceForge**](https://sourceforge.net/projects/revenant-os/files/latest/download) *(2.85 GB — high-speed global mirror network)*
+   - **Alternative (GitHub Releases Split Volumes)**:
+     Download [`revenant_os_1.1_build18.3.iso.001`](https://github.com/Fixitdaz/revenant-os/releases) and [`revenant_os_1.1_build18.3.iso.002`](https://github.com/Fixitdaz/revenant-os/releases), then join them:
      - **Windows (Command Prompt / PowerShell)**:
        ```cmd
        copy /b revenant_os_1.1_build18.3.iso.001 + revenant_os_1.1_build18.3.iso.002 revenant_os_1.1_build18.3.iso
