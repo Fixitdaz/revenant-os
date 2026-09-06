@@ -187,35 +187,36 @@ rm -f "$PATCH_ROOT/usr/share/lightdm/lightdm-gtk-greeter.conf.d/"*debian*.conf 2
 rm -f "$PATCH_ROOT/etc/lightdm/lightdm-gtk-greeter.conf.d/01-revenant.conf" 2>/dev/null || true
 
 if [ -f "$SCRIPT_DIR/revenant_bootsplash.png" ]; then
-  cp -f "$SCRIPT_DIR/revenant_bootsplash.png" "$PATCH_ROOT/usr/share/backgrounds/revenant_bootsplash.png"
-  cp -f "$SCRIPT_DIR/revenant_bootsplash.png" "$PATCH_ROOT/usr/share/images/desktop-base/desktop-background"
-  cp -f "$SCRIPT_DIR/revenant_bootsplash.png" "$PATCH_ROOT/usr/share/images/desktop-base/login-background.svg"
-  cp -f "$SCRIPT_DIR/revenant_bootsplash.png" "$PATCH_ROOT/boot/grub/splash.png" 2>/dev/null || true
+  mkdir -p "$PATCH_ROOT/usr/share/backgrounds" "$PATCH_ROOT/usr/share/images/desktop-base" "$PATCH_ROOT/boot/grub"
+  cp -f --remove-destination "$SCRIPT_DIR/revenant_bootsplash.png" "$PATCH_ROOT/usr/share/backgrounds/revenant_bootsplash.png"
+  cp -f --remove-destination "$SCRIPT_DIR/revenant_bootsplash.png" "$PATCH_ROOT/usr/share/images/desktop-base/desktop-background"
+  cp -f --remove-destination "$SCRIPT_DIR/revenant_bootsplash.png" "$PATCH_ROOT/usr/share/images/desktop-base/login-background.svg"
+  cp -f --remove-destination "$SCRIPT_DIR/revenant_bootsplash.png" "$PATCH_ROOT/boot/grub/splash.png" 2>/dev/null || true
 fi
 if [ -f "$SCRIPT_DIR/revenant_wallpaper.jpg" ]; then
-  cp -f "$SCRIPT_DIR/revenant_wallpaper.jpg" "$PATCH_ROOT/usr/share/backgrounds/revenant_wallpaper.jpg"
+  cp -f --remove-destination "$SCRIPT_DIR/revenant_wallpaper.jpg" "$PATCH_ROOT/usr/share/backgrounds/revenant_wallpaper.jpg"
 fi
 if [ -f "$SCRIPT_DIR/revenant_logo.png" ]; then
-  cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/usr/share/icons/revenant-logo.png"
-  cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/usr/share/icons/revenant-avatar.png"
+  cp -f --remove-destination "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/usr/share/icons/revenant-logo.png"
+  cp -f --remove-destination "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/usr/share/icons/revenant-avatar.png"
 
   # Completely overwrite Debian default avatars and all user account avatars with Revenant 'R' badge
   for av_dest in "$PATCH_ROOT/usr/share/images/desktop-base/avatar.png" "$PATCH_ROOT/usr/share/icons/desktop-base/avatar.png" \
                  "$PATCH_ROOT/usr/share/images/desktop-base/avatar.svg" "$PATCH_ROOT/usr/share/icons/desktop-base/avatar.svg"; do
-    cp -f "$SCRIPT_DIR/revenant_logo.png" "$av_dest" 2>/dev/null || true
+    cp -f --remove-destination "$SCRIPT_DIR/revenant_logo.png" "$av_dest" 2>/dev/null || true
   done
 
   # Overwrite default skel and root avatars
-  cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/etc/skel/.face" 2>/dev/null || true
-  cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/etc/skel/.face.icon" 2>/dev/null || true
-  cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/root/.face" 2>/dev/null || true
-  cp -f "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/root/.face.icon" 2>/dev/null || true
+  cp -f --remove-destination "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/etc/skel/.face" 2>/dev/null || true
+  cp -f --remove-destination "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/etc/skel/.face.icon" 2>/dev/null || true
+  cp -f --remove-destination "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/root/.face" 2>/dev/null || true
+  cp -f --remove-destination "$SCRIPT_DIR/revenant_logo.png" "$PATCH_ROOT/root/.face.icon" 2>/dev/null || true
 
   # Overwrite all existing user avatars in /home/*
   for uhome in "$PATCH_ROOT/home"/*; do
     if [ -d "$uhome" ]; then
-      cp -f "$SCRIPT_DIR/revenant_logo.png" "$uhome/.face" 2>/dev/null || true
-      cp -f "$SCRIPT_DIR/revenant_logo.png" "$uhome/.face.icon" 2>/dev/null || true
+      cp -f --remove-destination "$SCRIPT_DIR/revenant_logo.png" "$uhome/.face" 2>/dev/null || true
+      cp -f --remove-destination "$SCRIPT_DIR/revenant_logo.png" "$uhome/.face.icon" 2>/dev/null || true
     fi
   done
 
@@ -223,7 +224,7 @@ if [ -f "$SCRIPT_DIR/revenant_logo.png" ]; then
   if [ -d "$PATCH_ROOT/var/lib/AccountsService/icons" ]; then
     for icon_file in "$PATCH_ROOT/var/lib/AccountsService/icons"/*; do
       if [ -f "$icon_file" ]; then
-        cp -f "$SCRIPT_DIR/revenant_logo.png" "$icon_file" 2>/dev/null || true
+        cp -f --remove-destination "$SCRIPT_DIR/revenant_logo.png" "$icon_file" 2>/dev/null || true
       fi
     done
   fi
@@ -238,7 +239,7 @@ for deb_icon in "$PATCH_ROOT/usr/share/icons/desktop-base/debian.svg" \
                "$PATCH_ROOT/usr/share/icons/hicolor/"*/apps/debian*.png \
                "$PATCH_ROOT/usr/share/icons/hicolor/"*/apps/debian*.svg; do
   if [ -f "$deb_icon" ] && [ -f "$SCRIPT_DIR/revenant_logo.png" ]; then
-    cp -f "$SCRIPT_DIR/revenant_logo.png" "$deb_icon" 2>/dev/null || true
+    cp -f --remove-destination "$SCRIPT_DIR/revenant_logo.png" "$deb_icon" 2>/dev/null || true
   fi
 done
 
@@ -1043,8 +1044,8 @@ chmod +x "$PATCH_ROOT/usr/local/bin/revenant-i3-help"
 ln -sf /usr/local/bin/revenant-i3-help "$PATCH_ROOT/usr/local/bin/i3-help"
 
 mkdir -p "$PATCH_ROOT/usr/local/share/doc/revenant-os"
-if [ -f "$REPO_ROOT/docs/06-I3-USER-MANUAL.md" ]; then
-  cp -f "$REPO_ROOT/docs/06-I3-USER-MANUAL.md" "$PATCH_ROOT/usr/local/share/doc/revenant-os/" 2>/dev/null || true
+if [ -f "$SCRIPT_DIR/docs/06-I3-USER-MANUAL.md" ]; then
+  cp -f "$SCRIPT_DIR/docs/06-I3-USER-MANUAL.md" "$PATCH_ROOT/usr/local/share/doc/revenant-os/" 2>/dev/null || true
 fi
 
 mkdir -p "$PATCH_ROOT/usr/share/applications"
