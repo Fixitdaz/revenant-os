@@ -14,9 +14,17 @@ set +e
 
 REPO_OWNER="Fixitdaz"
 REPO_NAME="revenant-os"
-RAW_BASE="https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/main"
-RAW_FALLBACK="https://github.com/$REPO_OWNER/$REPO_NAME/raw/main"
 LOCAL_VERSION_FILE="/etc/revenant/version.json"
+LOCAL_CHANNEL_FILE="/etc/revenant/channel"
+
+# Channel detection: default to stable unless configured otherwise
+CHANNEL="stable"
+if [ -f "$LOCAL_CHANNEL_FILE" ]; then
+  CHANNEL=$(cat "$LOCAL_CHANNEL_FILE" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+fi
+if [ "$CHANNEL" != "beta" ]; then
+  CHANNEL="stable"
+fi
 
 CYAN="\033[96m"
 GREEN="\033[92m"
@@ -41,6 +49,18 @@ FORCE=false
 
 for arg in "$@"; do
   case "$arg" in
+    --beta|-b)
+      CHANNEL="beta"
+      mkdir -p /etc/revenant
+      echo "beta" > "$LOCAL_CHANNEL_FILE"
+      echo -e "${YELLOW}[*] Switched update channel to: ${BOLD}BETA${RESET}"
+      ;;
+    --stable|-s)
+      CHANNEL="stable"
+      mkdir -p /etc/revenant
+      echo "stable" > "$LOCAL_CHANNEL_FILE"
+      echo -e "${GREEN}[*] Switched update channel to: ${BOLD}STABLE${RESET}"
+      ;;
     --check|-c)
       CHECK_ONLY=true
       ;;
@@ -51,6 +71,8 @@ for arg in "$@"; do
       echo "Usage: sudo revenant-update [OPTIONS]"
       echo ""
       echo "Options:"
+      echo "  -b, --beta     Switch to BETA channel (test experimental builds)"
+      echo "  -s, --stable   Switch to STABLE channel (verified public releases)"
       echo "  -c, --check    Check for available updates without applying them"
       echo "  -f, --force    Force re-application of all updates and agent dependencies"
       echo "  -h, --help     Show this help message"
@@ -58,6 +80,14 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+TARGET_BRANCH="main"
+if [ "$CHANNEL" = "beta" ]; then
+  TARGET_BRANCH="beta"
+fi
+
+RAW_BASE="https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/$TARGET_BRANCH"
+RAW_FALLBACK="https://github.com/$REPO_OWNER/$REPO_NAME/raw/$TARGET_BRANCH"
 
 echo -e "${CYAN}[*] Testing internet connectivity...${RESET}"
 if ! curl -s --head --connect-timeout 5 https://github.com >/dev/null; then
@@ -98,8 +128,9 @@ fi
 CURRENT_VER=$(grep -oP '"version":\s*"\K[^"]+' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "1.0.0")
 CURRENT_BUILD=$(grep -oP '"build":\s*"?\K[0-9]+(\.[0-9]+)?' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "17")
 
+echo -e "${CYAN}[*] Update Channel:            ${BOLD}${CHANNEL^^}${RESET} (${CYAN}branch: $TARGET_BRANCH${RESET})"
 echo -e "${CYAN}[*] Current Installed Version: ${BOLD}v$CURRENT_VER (Build $CURRENT_BUILD)${RESET}"
-echo -e "${CYAN}[*] Querying remote release manifest from GitHub...${RESET}"
+echo -e "${CYAN}[*] Querying remote release manifest from GitHub ($TARGET_BRANCH)...${RESET}"
 
 REMOTE_MANIFEST=$(curl -fsSL -H "Cache-Control: no-cache" --connect-timeout 10 "$RAW_BASE/version.json" 2>/dev/null || \
                   curl -fsSL -L -H "Cache-Control: no-cache" --connect-timeout 10 "$RAW_FALLBACK/version.json" 2>/dev/null || true)
@@ -899,6 +930,7 @@ fi
 cat << EOF > "$LOCAL_VERSION_FILE"
 {
   "os_name": "Revenant OS",
+  "channel": "$CHANNEL",
   "version": "$REMOTE_VER",
   "build": "$REMOTE_BUILD",
   "local_inference": {
