@@ -88,15 +88,15 @@ if [ ! -f "$LOCAL_VERSION_FILE" ]; then
   cat << 'EOF' > "$LOCAL_VERSION_FILE"
 {
   "os_name": "Revenant OS",
-  "version": "1.0.0-rc15.8",
-  "build": "15.8",
+  "version": "1.0.0-rc15.9",
+  "build": "15.9",
   "release_date": "2026-09-06"
 }
 EOF
 fi
 
 CURRENT_VER=$(grep -oP '"version":\s*"\K[^"]+' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "1.0.0")
-CURRENT_BUILD=$(grep -oP '"build":\s*"?\K[0-9]+(\.[0-9]+)?' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "15.8")
+CURRENT_BUILD=$(grep -oP '"build":\s*"?\K[0-9]+(\.[0-9]+)?' "$LOCAL_VERSION_FILE" 2>/dev/null || echo "15.9")
 
 echo -e "${CYAN}[*] Current Installed Version: ${BOLD}v$CURRENT_VER (Build $CURRENT_BUILD)${RESET}"
 echo -e "${CYAN}[*] Querying remote release manifest from GitHub...${RESET}"
@@ -393,16 +393,17 @@ if len(sys.argv) < 2:
     sys.exit(1)
 
 prompt = " ".join(sys.argv[1:])
-print("\033[96m[Revenant Core: Local Qwen2.5 Thinking (Offline Toughbook CPU)...]\033[0m")
+print("\033[96m[Revenant Core: Local Qwen2.5 Thinking (Offline Toughbook CPU)...]\033[0m\n")
 
 payload = json.dumps({
     "model": "qwen2.5-coder-1.5b-instruct",
     "messages": [
-        {"role": "system", "content": "You are the Revenant OS AI Assistant on a Panasonic Toughbook. Give clear, expert Linux and computing answers."},
+        {"role": "system", "content": "You are the Revenant OS AI Assistant on a Panasonic Toughbook. Give clear, expert, concise Linux and computing answers."},
         {"role": "user", "content": prompt}
     ],
     "temperature": 0.6,
-    "max_tokens": 512
+    "max_tokens": 256,
+    "stream": True
 }).encode('utf-8')
 
 req = urllib.request.Request(
@@ -411,73 +412,41 @@ req = urllib.request.Request(
     headers={"Content-Type": "application/json"}
 )
 
+full_response = []
 try:
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        res = json.loads(resp.read().decode('utf-8'))
-        answer = res["choices"][0]["message"]["content"]
-        print("\n" + answer + "\n")
-        
-        # Strip special characters for Piper TTS
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        for line in resp:
+            line = line.decode('utf-8').strip()
+            if not line:
+                continue
+            if line.startswith("data: "):
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    if delta:
+                        sys.stdout.write(delta)
+                        sys.stdout.flush()
+                        full_response.append(delta)
+                except json.JSONDecodeError:
+                    pass
+    print("\n")
+    
+    answer = "".join(full_response)
+    if answer.strip():
         clean = answer.replace('*', '').replace('`', '').replace('#', '').replace('_', '').replace('"', '').replace("'", "")
-        # Speak response aloud asynchronously
-        cmd = f"echo '{clean}' | /opt/piper/piper -m /opt/piper/models/en_US-lessac-medium.onnx --output_raw | aplay -r 22050 -f S16_LE -t raw -"
+        cmd = f"echo '{clean}' | /opt/piper/piper -m /opt/piper/models/en_US-lessac-medium.onnx --output_raw 2>/dev/null | aplay -r 22050 -f S16_LE -t raw - 2>/dev/null"
         subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
 except Exception as e:
-    print(f"\033[91m[!] Local Engine Error: {e}\033[0m")
+    print(f"\n\033[91m[!] Local Engine Error: {e}\033[0m")
     print("Make sure llama-server is running: sudo systemctl status llama-server")
 PYEOF
 chmod +x /usr/local/bin/ai
 
-# Install/Update 'Start AI Stack & Diagnostics' helper and desktop launcher
-cat << 'STARTEOF' > /usr/local/bin/revenant-services
-#!/bin/bash
-clear
-echo -e "\033[96m\033[1m==========================================================\033[0m"
-echo -e "\033[96m\033[1m    REVENANT OS - LOCAL AI ENGINE & BACKGROUND STACK     \033[0m"
-echo -e "\033[96m\033[1m==========================================================\033[0m"
-echo ""
-echo -e "\033[96m[*] Checking & Restarting llama-server.service...\033[0m"
-sudo systemctl daemon-reload
-sudo systemctl restart llama-server.service 2>/dev/null || sudo systemctl start llama-server.service 2>/dev/null || true
-sudo systemctl restart openviking.service 2>/dev/null || sudo systemctl start openviking.service 2>/dev/null || true
-
-echo -e "\033[96m[*] Waiting for local model endpoint (http://127.0.0.1:8080/v1)...\033[0m"
-READY=false
-for i in {1..15}; do
-  if curl -s http://127.0.0.1:8080/v1/models >/dev/null 2>&1; then
-    READY=true
-    break
-  fi
-  sleep 1
-  echo -n "."
-done
-echo ""
-
-if [ "$READY" = true ]; then
-  echo -e "\033[92m\033[1m[✓] Local AI Engine is ACTIVE and ready on port 8080!\033[0m"
-else
-  echo -e "\033[93m[!] llama-server is initializing in the background.\033[0m"
-fi
-
-echo ""
-echo -e "\033[96m\033[1mService Status Overview:\033[0m"
-echo -n "  • llama-server: "
-systemctl is-active llama-server.service
-echo -n "  • openviking:   "
-systemctl is-active openviking.service
-
-echo ""
-echo -e "\033[92m\033[1mHow to interact with your local AI:\033[0m"
-echo "  1. Universal CLI:   ai \"What is the IP address of this machine?\""
-echo "  2. Autonomous Agent: hermes"
-echo "  3. OpenInterpreter:  interpreter"
-echo ""
-echo -e "Press [Enter] to launch an interactive Hermes session, or Ctrl+C to exit..."
-read -r
-hermes
-STARTEOF
-chmod +x /usr/local/bin/revenant-services
-
+# Update Desktop Launchers for AI stack
 for ddir in /etc/skel/Desktop /root/Desktop /home/*/Desktop; do
   if [ -d "$ddir" ]; then
     cat << 'DESKEOF' > "$ddir/Start_AI_Engine.desktop"
@@ -497,6 +466,7 @@ DESKEOF
     chown "$u_owner" "$ddir/Start_AI_Engine.desktop" 2>/dev/null || true
   fi
 done
+
 
 echo -e "${GREEN}[✓] Universal 'ai' terminal tool and Desktop AI Launcher updated.${RESET}"
 
@@ -696,8 +666,8 @@ echo -e "${GREEN}[✓] Security packages and hardware profiles synchronized.${RE
 # Update GRUB boot menu title to display current release
 if [ -f /boot/grub/grub.cfg ]; then
   echo -e "${CYAN}[*] Updating GRUB bootloader menu title...${RESET}"
-  sed -i -E 's/Revenant OS V[0-9.]+/Revenant OS V15.8/g' /boot/grub/grub.cfg 2>/dev/null || true
-  echo -e "${GREEN}[✓] GRUB bootloader title updated to Revenant OS V15.8.${RESET}"
+  sed -i -E 's/Revenant OS V[0-9.]+/Revenant OS V15.9/g' /boot/grub/grub.cfg 2>/dev/null || true
+  echo -e "${GREEN}[✓] GRUB bootloader title updated to Revenant OS V15.9.${RESET}"
 fi
 
 cat << EOF > "$LOCAL_VERSION_FILE"

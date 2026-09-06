@@ -215,7 +215,7 @@ INTERP_CFG
 done
 chown -R 1001:1001 "$PATCH_ROOT/home/user/.config" 2>/dev/null || true
 chown -R 1000:1000 "$PATCH_ROOT/home/revenant/.config" 2>/dev/null || true
-echo "[*] Installing hardened /usr/local/bin/ai CLI (120s timeout for Toughbook CPU)..."
+echo "[*] Installing streaming /usr/local/bin/ai CLI (real-time tokens, no timeout)..."
 cat << 'PYEOF' > "$PATCH_ROOT/usr/local/bin/ai"
 #!/usr/bin/env python3
 import sys, json, urllib.request, subprocess
@@ -226,16 +226,17 @@ if len(sys.argv) < 2:
     sys.exit(1)
 
 prompt = " ".join(sys.argv[1:])
-print("\033[96m[Revenant Core: Local Qwen2.5 Thinking (Offline Toughbook CPU)...]\033[0m")
+print("\033[96m[Revenant Core: Local Qwen2.5 Thinking (Offline Toughbook CPU)...]\033[0m\n")
 
 payload = json.dumps({
     "model": "qwen2.5-coder-1.5b-instruct",
     "messages": [
-        {"role": "system", "content": "You are the Revenant OS AI Assistant on a Panasonic Toughbook. Give clear, expert Linux and computing answers."},
+        {"role": "system", "content": "You are the Revenant OS AI Assistant on a Panasonic Toughbook. Give clear, expert, concise Linux and computing answers."},
         {"role": "user", "content": prompt}
     ],
     "temperature": 0.6,
-    "max_tokens": 512
+    "max_tokens": 256,
+    "stream": True
 }).encode('utf-8')
 
 req = urllib.request.Request(
@@ -244,19 +245,37 @@ req = urllib.request.Request(
     headers={"Content-Type": "application/json"}
 )
 
+full_response = []
 try:
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        res = json.loads(resp.read().decode('utf-8'))
-        answer = res["choices"][0]["message"]["content"]
-        print("\n" + answer + "\n")
-        
-        # Strip special characters for Piper TTS
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        for line in resp:
+            line = line.decode('utf-8').strip()
+            if not line:
+                continue
+            if line.startswith("data: "):
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    if delta:
+                        sys.stdout.write(delta)
+                        sys.stdout.flush()
+                        full_response.append(delta)
+                except json.JSONDecodeError:
+                    pass
+    print("\n")
+    
+    answer = "".join(full_response)
+    if answer.strip():
+        # Clean special chars for Piper TTS audio output
         clean = answer.replace('*', '').replace('`', '').replace('#', '').replace('_', '').replace('"', '').replace("'", "")
-        # Speak response aloud asynchronously
-        cmd = f"echo '{clean}' | /opt/piper/piper -m /opt/piper/models/en_US-lessac-medium.onnx --output_raw | aplay -r 22050 -f S16_LE -t raw -"
+        cmd = f"echo '{clean}' | /opt/piper/piper -m /opt/piper/models/en_US-lessac-medium.onnx --output_raw 2>/dev/null | aplay -r 22050 -f S16_LE -t raw - 2>/dev/null"
         subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
 except Exception as e:
-    print(f"\033[91m[!] Local Engine Error: {e}\033[0m")
+    print(f"\n\033[91m[!] Local Engine Error: {e}\033[0m")
     print("Make sure llama-server is running: sudo systemctl status llama-server")
 PYEOF
 chmod +x "$PATCH_ROOT/usr/local/bin/ai"
