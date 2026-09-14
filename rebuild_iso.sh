@@ -717,19 +717,29 @@ fi
 # Pre-seed OpenCode configuration pointing to local llama-server (:8080)
 for opencode_dir in "$PATCH_ROOT/etc/skel/.config/opencode" "$PATCH_ROOT/home/user/.config/opencode" "$PATCH_ROOT/home/revenant/.config/opencode"; do
   mkdir -p "$opencode_dir"
-  cat << 'OPENCODE_JSON_EOF' > "$opencode_dir/config.json"
+  cat << 'OPENCODE_JSON_EOF' > "$opencode_dir/opencode.json"
 {
   "$schema": "https://opencode.ai/config.json",
+  "model": "revenant-local/qwen2.5-coder-1.5b-instruct",
+  "autoupdate": false,
   "provider": {
-    "id": "openai-compatible",
-    "options": {
-      "baseURL": "http://127.0.0.1:8080/v1",
-      "apiKey": "sk-local-revenant"
-    },
-    "model": "qwen2.5-coder-1.5b-instruct"
+    "revenant-local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Revenant Local LLM (Offline)",
+      "options": {
+        "baseURL": "http://127.0.0.1:8080/v1",
+        "apiKey": "sk-local-revenant"
+      },
+      "models": {
+        "qwen2.5-coder-1.5b-instruct": {
+          "name": "Qwen2.5 Coder 1.5B (Local Toughbook)"
+        }
+      }
+    }
   }
 }
 OPENCODE_JSON_EOF
+  cp "$opencode_dir/opencode.json" "$opencode_dir/config.json"
 done
 
 # Create OpenCode Desktop Launcher
