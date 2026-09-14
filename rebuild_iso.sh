@@ -742,6 +742,34 @@ OPENCODE_JSON_EOF
   cp "$opencode_dir/opencode.json" "$opencode_dir/config.json"
 done
 
+# Pre-seed ~/.local/state/opencode/model.json so OpenCode TUI never defaults to OpenAI / GPT-5
+for state_dir in "$PATCH_ROOT/etc/skel/.local/state/opencode" "$PATCH_ROOT/home/user/.local/state/opencode" "$PATCH_ROOT/home/revenant/.local/state/opencode"; do
+  mkdir -p "$state_dir"
+  cat << 'STATE_JSON_EOF' > "$state_dir/model.json"
+{
+  "recent": [
+    {
+      "providerID": "revenant-local",
+      "modelID": "qwen2.5-coder-1.5b-instruct"
+    }
+  ],
+  "favorite": [
+    {
+      "providerID": "revenant-local",
+      "modelID": "qwen2.5-coder-1.5b-instruct"
+    }
+  ]
+}
+STATE_JSON_EOF
+done
+
+# Wrapper script ensuring local model flag is always passed
+cat << 'WRAPPER_EOF' > "$PATCH_ROOT/usr/local/bin/revenant-opencode"
+#!/usr/bin/env bash
+exec /usr/local/bin/opencode --model revenant-local/qwen2.5-coder-1.5b-instruct "$@"
+WRAPPER_EOF
+chmod +x "$PATCH_ROOT/usr/local/bin/revenant-opencode"
+
 # Create OpenCode Desktop Launcher
 mkdir -p "$PATCH_ROOT/usr/share/applications"
 cat << 'OPENCODE_DESKTOP_EOF' > "$PATCH_ROOT/usr/share/applications/opencode.desktop"
@@ -750,7 +778,7 @@ Version=1.0
 Type=Application
 Name=OpenCode AI Agent
 Comment=Autonomous AI Coding Agent (Terminal UI)
-Exec=xfce4-terminal --title="OpenCode AI Agent" --geometry=110x34 -e "opencode"
+Exec=xfce4-terminal --title="OpenCode AI Agent" --geometry=110x34 -e "revenant-opencode"
 Icon=utilities-terminal
 Terminal=false
 Categories=Development;IDE;
@@ -1257,7 +1285,7 @@ SHORTCUTS_EOF
 # Revenant OS Hotkeys & Quick Reference
 bindsym $mod+m exec --no-startup-id /usr/local/bin/revenant-voice
 bindsym Mod1+Control+m exec --no-startup-id /usr/local/bin/revenant-voice
-bindsym $mod+Shift+c exec --no-startup-id xfce4-terminal --title="OpenCode AI Agent" --geometry=110x34 -e "opencode"
+bindsym $mod+Shift+c exec --no-startup-id xfce4-terminal --title="OpenCode AI Agent" --geometry=110x34 -e "revenant-opencode"
 bindsym $mod+F1 exec --no-startup-id /usr/local/bin/revenant-i3-help
 I3_HOTKEY
 done
@@ -1455,8 +1483,16 @@ sed -i 's/^# *%sudo/%sudo/' /mnt/target/etc/sudoers 2>/dev/null || true
 if [ -d "/mnt/target/etc/skel/.config/open-interpreter" ]; then
   mkdir -p "/mnt/target/home/$NEW_USER/.config/open-interpreter"
   cp -a /mnt/target/etc/skel/.config/open-interpreter/* "/mnt/target/home/$NEW_USER/.config/open-interpreter/"
-  chroot /mnt/target chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.config" 2>/dev/null || true
 fi
+if [ -d "/mnt/target/etc/skel/.config/opencode" ]; then
+  mkdir -p "/mnt/target/home/$NEW_USER/.config/opencode"
+  cp -a /mnt/target/etc/skel/.config/opencode/* "/mnt/target/home/$NEW_USER/.config/opencode/"
+fi
+if [ -d "/mnt/target/etc/skel/.local/state/opencode" ]; then
+  mkdir -p "/mnt/target/home/$NEW_USER/.local/state/opencode"
+  cp -a /mnt/target/etc/skel/.local/state/opencode/* "/mnt/target/home/$NEW_USER/.local/state/opencode/"
+fi
+chroot /mnt/target chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.config" "/home/$NEW_USER/.local" 2>/dev/null || true
 
 # Ensure Desktop and AI shortcuts exist in installed user home
 mkdir -p "/mnt/target/home/$NEW_USER/Desktop"
@@ -1488,7 +1524,7 @@ for i3_cfg in /mnt/target/etc/i3/config /mnt/target/etc/skel/.config/i3/config /
 # Revenant OS Hotkeys & Quick Reference
 bindsym $mod+m exec --no-startup-id /usr/local/bin/revenant-voice
 bindsym Mod1+Control+m exec --no-startup-id /usr/local/bin/revenant-voice
-bindsym $mod+Shift+c exec --no-startup-id xfce4-terminal --title="OpenCode AI Agent" --geometry=110x34 -e "opencode"
+bindsym $mod+Shift+c exec --no-startup-id xfce4-terminal --title="OpenCode AI Agent" --geometry=110x34 -e "revenant-opencode"
 bindsym $mod+F1 exec --no-startup-id /usr/local/bin/revenant-i3-help
 I3_HOTKEY
   fi
