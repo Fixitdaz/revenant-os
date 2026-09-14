@@ -3,6 +3,7 @@
 *.iso.*
 *.img
 *.squashfs
+*.tar.gz
 SHA256SUMS.txt
 
 # Temporary workspaces and build directories

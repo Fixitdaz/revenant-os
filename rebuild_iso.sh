@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="/var/tmp/toughbook_rebuild_1_1"
 PATCH_ROOT="/var/tmp/patch_root_1_1"
 ISO_SOURCE="$SCRIPT_DIR/revenant_os_toughbook_v15_5.iso"
-ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build18.3.iso"
+ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build19.iso"
 ISO_ALIAS="$SCRIPT_DIR/revenant_os_latest.iso"
 CACHE_DIR="/var/tmp/revenant_cache"
 
@@ -698,6 +698,67 @@ max_tokens: 512
 offline: true
 INTERP_CFG
 done
+
+echo "[*] Installing OpenCode standalone terminal agent..."
+OPENCODE_TAR="$CACHE_DIR/opencode-linux-x64.tar.gz"
+if [ ! -f "$OPENCODE_TAR" ] && [ -f "$SCRIPT_DIR/opencode-linux-x64.tar.gz" ]; then
+  OPENCODE_TAR="$SCRIPT_DIR/opencode-linux-x64.tar.gz"
+elif [ ! -f "$OPENCODE_TAR" ]; then
+  mkdir -p "$CACHE_DIR"
+  echo "[*] Downloading OpenCode standalone Linux binary release..."
+  wget -q --show-progress -c "https://github.com/anomalyco/opencode/releases/download/v1.18.30/opencode-linux-x64.tar.gz" -O "$CACHE_DIR/opencode-linux-x64.tar.gz" || true
+fi
+
+if [ -f "$OPENCODE_TAR" ]; then
+  tar -xzf "$OPENCODE_TAR" -C "$PATCH_ROOT/usr/local/bin/"
+  chmod +x "$PATCH_ROOT/usr/local/bin/opencode" 2>/dev/null || true
+fi
+
+# Pre-seed OpenCode configuration pointing to local llama-server (:8080)
+for opencode_dir in "$PATCH_ROOT/etc/skel/.config/opencode" "$PATCH_ROOT/home/user/.config/opencode" "$PATCH_ROOT/home/revenant/.config/opencode"; do
+  mkdir -p "$opencode_dir"
+  cat << 'OPENCODE_JSON_EOF' > "$opencode_dir/config.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "id": "openai-compatible",
+    "options": {
+      "baseURL": "http://127.0.0.1:8080/v1",
+      "apiKey": "sk-local-revenant"
+    },
+    "model": "qwen2.5-coder-1.5b-instruct"
+  }
+}
+OPENCODE_JSON_EOF
+done
+
+# Create OpenCode Desktop Launcher
+mkdir -p "$PATCH_ROOT/usr/share/applications"
+cat << 'OPENCODE_DESKTOP_EOF' > "$PATCH_ROOT/usr/share/applications/opencode.desktop"
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=OpenCode AI Agent
+Comment=Autonomous AI Coding Agent (Terminal UI)
+Exec=xfce4-terminal --title="OpenCode AI Agent" --geometry=110x34 -e "opencode"
+Icon=utilities-terminal
+Terminal=false
+Categories=Development;IDE;
+OPENCODE_DESKTOP_EOF
+
+# Install Agent Reach and Curated Field Skills
+echo "[*] Installing Agent Reach and offline field engineering skills..."
+mkdir -p "$PATCH_ROOT/opt/agent-reach" "$PATCH_ROOT/usr/share/revenant/skills"
+if [ -d "$SCRIPT_DIR/../agent-reach" ]; then
+  cp -a "$SCRIPT_DIR/../agent-reach/"* "$PATCH_ROOT/opt/agent-reach/" 2>/dev/null || true
+fi
+if [ -d "/opt/agent-reach" ] && [ ! -f "$PATCH_ROOT/opt/agent-reach/pyproject.toml" ]; then
+  cp -a /opt/agent-reach/* "$PATCH_ROOT/opt/agent-reach/" 2>/dev/null || true
+fi
+if [ -d "$SCRIPT_DIR/skills" ]; then
+  cp -a "$SCRIPT_DIR/skills/"* "$PATCH_ROOT/usr/share/revenant/skills/" 2>/dev/null || true
+fi
+
 chown -R 1001:1001 "$PATCH_ROOT/home/user/.config" 2>/dev/null || true
 chown -R 1000:1000 "$PATCH_ROOT/home/revenant/.config" 2>/dev/null || true
 
@@ -1186,6 +1247,7 @@ SHORTCUTS_EOF
 # Revenant OS Hotkeys & Quick Reference
 bindsym $mod+m exec --no-startup-id /usr/local/bin/revenant-voice
 bindsym Mod1+Control+m exec --no-startup-id /usr/local/bin/revenant-voice
+bindsym $mod+Shift+c exec --no-startup-id xfce4-terminal --title="OpenCode AI Agent" --geometry=110x34 -e "opencode"
 bindsym $mod+F1 exec --no-startup-id /usr/local/bin/revenant-i3-help
 I3_HOTKEY
 done
@@ -1296,7 +1358,7 @@ zenity --question --title="Confirm Installation" \
   --ok-label="Yes, Erase & Install" --cancel-label="Cancel" || exit 0
 
 LOG="/tmp/revenant_install.log"
-echo "=== Revenant OS 1.0 (Build 17) Installation Started ===" > "$LOG"
+echo "=== Revenant OS 1.1 (Build 19) Installation Started ===" > "$LOG"
 date >> "$LOG"
 
 (
@@ -1416,6 +1478,7 @@ for i3_cfg in /mnt/target/etc/i3/config /mnt/target/etc/skel/.config/i3/config /
 # Revenant OS Hotkeys & Quick Reference
 bindsym $mod+m exec --no-startup-id /usr/local/bin/revenant-voice
 bindsym Mod1+Control+m exec --no-startup-id /usr/local/bin/revenant-voice
+bindsym $mod+Shift+c exec --no-startup-id xfce4-terminal --title="OpenCode AI Agent" --geometry=110x34 -e "opencode"
 bindsym $mod+F1 exec --no-startup-id /usr/local/bin/revenant-i3-help
 I3_HOTKEY
   fi
@@ -1647,7 +1710,7 @@ insmod ext2
 set root='hd0,msdos1'
 search --no-floppy --fs-uuid --set=root $UUID
 
-menuentry "Revenant OS 1.1 (Build 18.3) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 19) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -1656,7 +1719,7 @@ menuentry "Revenant OS 1.1 (Build 18.3) - Agentic Linux" --class debian --class 
     initrd /boot/$INITRD
 }
 
-menuentry "Revenant OS 1.1 (Build 18.3) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 19) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -1680,11 +1743,11 @@ umount -l /mnt/target/dev 2>/dev/null || true
 umount -l /mnt/target 2>/dev/null || true
 
 echo "100"; echo "# Installation Complete!"
-) | zenity --progress --title="Installing Revenant OS 1.1 (Build 18.3)" --text="Starting installation..." --percentage=0 --auto-close
+) | zenity --progress --title="Installing Revenant OS 1.1 (Build 19)" --text="Starting installation..." --percentage=0 --auto-close
 
 if [ -f "$LOG" ] && grep -iq "Installing for i386-pc platform" "$LOG"; then
   zenity --info --title="Success" \
-    --text="<b>Revenant OS 1.1 (Build 18.3) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
+    --text="<b>Revenant OS 1.1 (Build 19) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
 else
   zenity --error --title="Error" \
     --text="An error occurred during installation. Check /tmp/revenant_install.log or the target drive."
@@ -1712,12 +1775,12 @@ if background_image /boot/grub/splash.png; then
   set color_highlight=cyan/black
 fi
 
-menuentry "Revenant OS 1.1 (Build 18.3) - Agentic Core (Offline Voice + Local LLM)" {
+menuentry "Revenant OS 1.1 (Build 19) - Agentic Core (Offline Voice + Local LLM + OpenCode)" {
     linux /live/vmlinuz boot=live components quiet splash
     initrd /live/initrd.img
 }
 
-menuentry "Revenant OS 1.1 (Build 18.3) (Safe Graphics / Failsafe)" {
+menuentry "Revenant OS 1.1 (Build 19) (Safe Graphics / Failsafe)" {
     linux /live/vmlinuz boot=live components nomodeset
     initrd /live/initrd.img
 }
@@ -1726,13 +1789,13 @@ EOF
 echo "[*] Packaging patched SquashFS (xz compression)..."
 mksquashfs "$PATCH_ROOT" "$WORKSPACE_DIR/image/live/filesystem.squashfs" -comp xz
 
-echo "[*] Building 1.1 Build 18.3 ISO with hybrid bootloader..."
-grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1"
+echo "[*] Building 1.1 Build 19 ISO with hybrid bootloader..."
+grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 19)"
 cp -f "$ISO_TARGET" "$ISO_ALIAS"
 
 echo "[*] Cleaning up workspace..."
 rm -rf "$WORKSPACE_DIR" "$PATCH_ROOT"
 
-echo "[*] Build Complete! Revenant OS 1.1 (Build 18.3) ISO ready at: $ISO_TARGET"
+echo "[*] Build Complete! Revenant OS 1.1 (Build 19) ISO ready at: $ISO_TARGET"
 ls -lh "$ISO_TARGET" "$ISO_ALIAS"
 
