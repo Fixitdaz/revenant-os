@@ -130,7 +130,7 @@ StartLimitBurst=0
 [Service]
 Type=simple
 Environment=LD_LIBRARY_PATH=/opt/llama.cpp
-ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --alias qwen2.5-coder-1.5b-instruct --host 127.0.0.1 --port 8080 --ctx-size 4096 --threads 2 -np 1 --no-cache-prompt -sps 0 --n-gpu-layers 0
+ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --alias qwen2.5-coder-1.5b-instruct --host 127.0.0.1 --port 8080 --ctx-size 4096 --threads 2 -np 1 --no-cache-prompt -sps 0 --repeat-penalty 1.15 --repeat-last-n 128 --n-gpu-layers 0
 Restart=always
 RestartSec=5
 User=root
@@ -735,6 +735,12 @@ for opencode_dir in "$PATCH_ROOT/etc/skel/.config/opencode" "$PATCH_ROOT/home/us
           "name": "Qwen2.5 Coder 1.5B (Local Toughbook)"
         }
       }
+    }
+  },
+  "agent": {
+    "build": {
+      "prompt": "You are OpenCode, an AI coding assistant on Revenant OS for Panasonic Toughbook. You help the user write code, inspect files, and execute terminal commands. Answer questions concisely, directly, and practically. Never repeat phrases or get stuck in loops.",
+      "temperature": 0.5
     }
   }
 }
