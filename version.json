@@ -1,11 +1,11 @@
 {
   "os_name": "Revenant OS",
   "version": "1.1.0",
-  "build": "19.1",
-  "display": "Revenant OS 1.1 (Build 19.1 - Agentic Developer Edition)",
+  "build": "19.2",
+  "display": "Revenant OS 1.1 (Build 19.2 - Agentic Developer Edition)",
   "channel": "beta",
   "target_hardware": "Panasonic Toughbook CF-52 & Field Laptops",
-  "release_date": "2026-09-14",
+  "release_date": "2026-09-15",
   "kernel": "6.1.0-50-amd64",
   "local_inference": {
     "engine": "llama-server",
