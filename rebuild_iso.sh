@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="/var/tmp/toughbook_rebuild_1_1"
 PATCH_ROOT="/var/tmp/patch_root_1_1"
 ISO_SOURCE="$SCRIPT_DIR/revenant_os_toughbook_v15_5.iso"
-ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build19.7.iso"
+ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build19.8.iso"
 ISO_ALIAS="$SCRIPT_DIR/revenant_os_latest.iso"
 CACHE_DIR="/var/tmp/revenant_cache"
 
@@ -73,7 +73,8 @@ chroot "$PATCH_ROOT" apt-get install -y --no-install-recommends \
   i3status \
   dmenu \
   feh \
-  ufw
+  ufw \
+  python3-prompt-toolkit
 
 # Install Bitwarden Desktop deb
 if [ -f "$CACHE_DIR/Bitwarden-amd64.deb" ]; then
@@ -294,12 +295,29 @@ cat << 'AGENT_EOF' > "$PATCH_ROOT/usr/local/bin/revenant-agent"
 # Engines: Local (Qwen 2.5 Coder 3B) & OmniRoute/Cloud API (/cloud, /local)
 # Hardware: Toughbook CF-52 Mic Boost, Whisper STT, Piper TTS & Telemetry
 # ==============================================================================
-import sys, os, json, re, urllib.request, urllib.error, subprocess, glob, time, signal, atexit, shutil
+import sys, os, json, re, urllib.request, urllib.error, subprocess, glob, time, signal, atexit, shutil, select
+
+try:
+    import termios, tty
+    TERMIOS_AVAILABLE = True
+except ImportError:
+    TERMIOS_AVAILABLE = False
 
 try:
     import readline
 except ImportError:
     readline = None
+
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+    from prompt_toolkit.completion import WordCompleter
+    from prompt_toolkit.history import FileHistory
+    from prompt_toolkit.styles import Style
+    from prompt_toolkit.formatted_text import HTML
+    PROMPT_TOOLKIT_AVAILABLE = True
+except ImportError:
+    PROMPT_TOOLKIT_AVAILABLE = False
 
 CYAN = "\033[96m"
 GREEN = "\033[92m"
@@ -358,14 +376,41 @@ Provide exact, reliable terminal commands and concise technical explanations."""
 }
 
 CONFIG_DIR = os.path.expanduser("~/.revenant")
+CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 CLOUD_CONF_PATH = os.path.join(CONFIG_DIR, "cloud.conf")
 MEMORY_FALLBACK_PATH = os.path.join(CONFIG_DIR, "agent_memory.json")
+HISTORY_PATH = os.path.join(CONFIG_DIR, "agent_history")
 PID_FILE = "/tmp/revenant_agent.pid"
 
-VOICE_ENABLED = False
+def load_config():
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    cfg = {
+        "voice_enabled": False,
+        "default_mode": "general",
+        "default_engine": "local"
+    }
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, 'r') as f:
+                cfg.update(json.load(f))
+        except Exception:
+            pass
+    return cfg
+
+def save_config(cfg):
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    try:
+        with open(CONFIG_PATH, 'w') as f:
+            json.dump(cfg, f, indent=2)
+    except Exception:
+        pass
+
+app_cfg = load_config()
+VOICE_ENABLED = app_cfg.get("voice_enabled", False)
 mic_requested = False
-current_mode = "general"
-current_engine = "local"
+current_mode = app_cfg.get("default_mode", "general")
+current_engine = app_cfg.get("default_engine", "local")
+current_speech_proc = None
 
 def cleanup_pid():
     try:
@@ -386,6 +431,9 @@ except Exception:
 class VoiceTrigger(Exception):
     pass
 
+class StreamCancelled(Exception):
+    pass
+
 def handle_voice_signal(signum, frame):
     global mic_requested
     mic_requested = True
@@ -397,32 +445,67 @@ try:
 except Exception:
     pass
 
-def set_input_buffer(text):
-    if not text or not readline:
-        return
-    def pre_hook():
+def stop_speech():
+    global current_speech_proc
+    if current_speech_proc:
         try:
-            readline.insert_text(text)
-            readline.redisplay()
+            current_speech_proc.terminate()
+            current_speech_proc.kill()
         except Exception:
             pass
-        try:
-            readline.set_pre_input_hook(None)
-        except Exception:
-            pass
+        current_speech_proc = None
     try:
-        readline.set_pre_input_hook(pre_hook)
+        subprocess.run("pkill -9 aplay; pkill -9 piper", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
 
 def speak_text(text):
+    global current_speech_proc
     if not VOICE_ENABLED:
         return
     clean = re.sub(r'\[.*?\]', '', text)
     clean = re.sub(r'[*`#_"\']', '', clean).strip()
     if clean:
+        stop_speech()
         cmd = f"echo '{clean}' | /opt/piper/piper -m /opt/piper/models/en_US-lessac-medium.onnx --output_raw 2>/dev/null | aplay -r 22050 -f S16_LE -t raw - 2>/dev/null"
-        subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            current_speech_proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+class RawTerminalInput:
+    """Non-blocking cbreak terminal input to detect Esc and Ctrl+C during streaming."""
+    def __enter__(self):
+        self.fd = None
+        self.old_settings = None
+        if TERMIOS_AVAILABLE and sys.stdin.isatty():
+            try:
+                self.fd = sys.stdin.fileno()
+                self.old_settings = termios.tcgetattr(self.fd)
+                tty.setcbreak(self.fd)
+            except Exception:
+                pass
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.fd is not None and self.old_settings is not None:
+            try:
+                termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old_settings)
+            except Exception:
+                pass
+
+    def check_cancel(self):
+        if not TERMIOS_AVAILABLE or not sys.stdin.isatty():
+            return False
+        try:
+            r, _, _ = select.select([sys.stdin], [], [], 0)
+            if r:
+                data = os.read(sys.stdin.fileno(), 1024)
+                if b'\x1b' in data or b'\x03' in data:
+                    return True
+        except Exception:
+            pass
+        return False
 
 def configure_microphone():
     controls = [
@@ -655,14 +738,59 @@ def execute_tool(action_type, payload):
 
 def call_model(messages, max_tokens=384):
     global current_engine
-    if current_engine == "cloud":
-        conf = load_cloud_config()
-        url = conf.get("base_url", "http://localhost:20128/v1").rstrip('/') + "/chat/completions"
-        api_key = conf.get("api_key", "sk-omniroute")
-        model = conf.get("model", "deepseek/deepseek-chat")
+    with RawTerminalInput() as term_input:
+        if current_engine == "cloud":
+            conf = load_cloud_config()
+            url = conf.get("base_url", "http://localhost:20128/v1").rstrip('/') + "/chat/completions"
+            api_key = conf.get("api_key", "sk-omniroute")
+            model = conf.get("model", "deepseek/deepseek-chat")
 
+            payload = json.dumps({
+                "model": model,
+                "messages": messages,
+                "temperature": 0.5,
+                "max_tokens": max_tokens,
+                "stream": True
+            }).encode('utf-8')
+
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+            )
+
+            try:
+                collected = []
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    for line in resp:
+                        if term_input.check_cancel():
+                            stop_speech()
+                            raise StreamCancelled()
+                        line = line.decode('utf-8').strip()
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data_str)
+                            delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            if delta:
+                                sys.stdout.write(delta)
+                                sys.stdout.flush()
+                                collected.append(delta)
+                        except json.JSONDecodeError:
+                            pass
+                print()
+                return "".join(collected)
+            except StreamCancelled:
+                raise
+            except Exception as e:
+                print(f"\n{YELLOW}[!] OmniRoute/Cloud endpoint error ({e}). Falling back to local neural engine...{RESET}")
+
+        # Fallback / Local Model (llama-server)
         payload = json.dumps({
-            "model": model,
+            "model": "default",
             "messages": messages,
             "temperature": 0.5,
             "max_tokens": max_tokens,
@@ -670,70 +798,34 @@ def call_model(messages, max_tokens=384):
         }).encode('utf-8')
 
         req = urllib.request.Request(
-            url,
+            "http://127.0.0.1:8080/v1/chat/completions",
             data=payload,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+            headers={"Content-Type": "application/json"}
         )
 
-        try:
-            collected = []
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                for line in resp:
-                    line = line.decode('utf-8').strip()
-                    if not line or not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data_str)
-                        delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                        if delta:
-                            sys.stdout.write(delta)
-                            sys.stdout.flush()
-                            collected.append(delta)
-                    except json.JSONDecodeError:
-                        pass
-            print()
-            return "".join(collected)
-        except Exception as e:
-            print(f"\n{YELLOW}[!] OmniRoute/Cloud endpoint error ({e}). Falling back to local neural engine...{RESET}")
-
-    # Fallback / Local Model (llama-server)
-    payload = json.dumps({
-        "model": "default",
-        "messages": messages,
-        "temperature": 0.5,
-        "max_tokens": max_tokens,
-        "stream": True
-    }).encode('utf-8')
-
-    req = urllib.request.Request(
-        "http://127.0.0.1:8080/v1/chat/completions",
-        data=payload,
-        headers={"Content-Type": "application/json"}
-    )
-
-    collected = []
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        for line in resp:
-            line = line.decode('utf-8').strip()
-            if not line or not line.startswith("data: "):
-                continue
-            data_str = line[6:]
-            if data_str == "[DONE]":
-                break
-            try:
-                chunk = json.loads(data_str)
-                delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                if delta:
-                    sys.stdout.write(delta)
-                    sys.stdout.flush()
-                    collected.append(delta)
-            except json.JSONDecodeError:
-                pass
-    print()
-    return "".join(collected)
+        collected = []
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            for line in resp:
+                if term_input.check_cancel():
+                    stop_speech()
+                    raise StreamCancelled()
+                line = line.decode('utf-8').strip()
+                if not line or not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    if delta:
+                        sys.stdout.write(delta)
+                        sys.stdout.flush()
+                        collected.append(delta)
+                except json.JSONDecodeError:
+                    pass
+        print()
+        return "".join(collected)
 
 def print_banner():
     p = PERSONAS.get(current_mode, PERSONAS["general"])
@@ -746,17 +838,44 @@ def print_banner():
     if telem:
         print(f"{DIM}{telem}{RESET}")
     eng_str = f"{GREEN}Local 3B (Offline){RESET}" if current_engine == "local" else f"{CYAN}OmniRoute / Cloud{RESET}"
-    print(f"{DIM}Engine: [{eng_str}{DIM}] | Memory: [{GREEN}OpenViking Active{RESET}{DIM}] | Mode: [{col}{p['name']}{RESET}{DIM}]{RESET}")
-    print(f"{DIM}Commands: /mechanic | /electronics | /sysadmin | /general | /cloud | /local | /remember | /recall{RESET}")
+    voice_str = f"{GREEN}Voice: ON 🔊{RESET}" if VOICE_ENABLED else f"{YELLOW}Voice: OFF 🔇{RESET}"
+    predict_str = f"{GREEN}Fish Autosuggest Active{RESET}" if PROMPT_TOOLKIT_AVAILABLE else f"{DIM}Readline Mode{RESET}"
+    print(f"{DIM}Engine: [{eng_str}{DIM}] | Memory: [{GREEN}OpenViking Active{RESET}{DIM}] | [{voice_str}{DIM}] | Mode: [{col}{p['name']}{RESET}{DIM}]{RESET}")
+    print(f"{DIM}Predictive: [{predict_str}{DIM}] (Press → to accept suggestions | Press <Esc> to cancel thinking){RESET}")
+    print(f"{CYAN}OmniRoute Web UI: http://localhost:20128 (Open in browser to configure free APIs){RESET}")
+    print(f"{DIM}Commands: /mechanic | /electronics | /sysadmin | /voice on/off | /cloud | /local | /remember | /recall{RESET}")
     print(f"{CYAN}Hotkeys:  Press <Super>+M anytime to speak directly into this window.{RESET}\n")
 
 def run_agent_loop(initial_prompt=None, initial_mic=False):
-    global VOICE_ENABLED, mic_requested, current_mode, current_engine
+    global VOICE_ENABLED, mic_requested, current_mode, current_engine, app_cfg
     print_banner()
 
     history = [
         {"role": "system", "content": PERSONAS[current_mode]["prompt"]}
     ]
+
+    slash_commands = [
+        '/mechanic', '/electronics', '/sysadmin', '/general',
+        '/cloud', '/cloud config', '/local',
+        '/remember', '/recall',
+        '/voice', '/voice on', '/voice off', '/mute', '/unmute',
+        '/mic', '/talk', '/listen', '/clear', '/sysinfo', '/hw', '/help', 'exit', 'quit'
+    ]
+
+    session = None
+    if PROMPT_TOOLKIT_AVAILABLE:
+        try:
+            session = PromptSession(
+                history=FileHistory(HISTORY_PATH),
+                auto_suggest=AutoSuggestFromHistory(),
+                completer=WordCompleter(slash_commands, ignore_case=True, sentence=True),
+                style=Style.from_dict({
+                    'auto-suggest': '#777777 italic',
+                    'prompt': '#00ff88 bold',
+                })
+            )
+        except Exception:
+            session = None
 
     pending_user_input = initial_prompt
     if initial_mic:
@@ -775,7 +894,17 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
             pending_user_input = None
         else:
             try:
-                user_input = input(f"{col}{BOLD}{current_mode} ❯ {RESET}").strip()
+                if session is not None:
+                    prompt_html = HTML(f"<b><ansigreen>{current_mode}</ansigreen></b> ❯ ")
+                    if current_mode == "mechanic":
+                        prompt_html = HTML(f"<b><ansiyellow>{current_mode}</ansiyellow></b> ❯ ")
+                    elif current_mode == "electronics":
+                        prompt_html = HTML(f"<b><ansimagenta>{current_mode}</ansimagenta></b> ❯ ")
+                    elif current_mode == "general":
+                        prompt_html = HTML(f"<b><ansicyan>{current_mode}</ansicyan></b> ❯ ")
+                    user_input = session.prompt(prompt_html).strip()
+                else:
+                    user_input = input(f"{col}{BOLD}{current_mode} ❯ {RESET}").strip()
             except (VoiceTrigger, InterruptedError):
                 mic_requested = False
                 handle_mic_input()
@@ -793,7 +922,7 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
 
         cmd_lower = user_input.lower()
         if cmd_lower in ('exit', 'quit', ':q'):
-            print(f"{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
+            print(f"\n{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
             break
 
         # Persona / Mode switching
@@ -836,6 +965,7 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
             conf = load_cloud_config()
             print(f"\n{CYAN}[✓] Switched to OmniRoute / Cloud Engine.{RESET}")
             print(f"{DIM}Endpoint: {conf['base_url']} | Model: {conf['model']}{RESET}")
+            print(f"{CYAN}OmniRoute Web UI: http://localhost:20128 (Configure free APIs in browser){RESET}")
             print(f"{DIM}(Type /local to return to offline CPU or /cloud config to edit settings){RESET}\n")
             continue
         elif cmd_lower.startswith('/cloud config') or cmd_lower.startswith('/cloud setup'):
@@ -875,6 +1005,33 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
                 print(f"\n{YELLOW}[No memories found matching '{term}']{RESET}\n")
             continue
 
+        # Voice talkback toggling
+        elif cmd_lower in ('/voice on', '/unmute'):
+            VOICE_ENABLED = True
+            app_cfg['voice_enabled'] = True
+            save_config(app_cfg)
+            print(f"\n{GREEN}[✓] Voice talkback is now ENABLED 🔊 (Saved to preferences).{RESET}\n")
+            speak_text("Voice talkback enabled.")
+            continue
+        elif cmd_lower in ('/voice off', '/mute'):
+            VOICE_ENABLED = False
+            stop_speech()
+            app_cfg['voice_enabled'] = False
+            save_config(app_cfg)
+            print(f"\n{YELLOW}[✓] Voice talkback is now MUTED 🔇 (Saved to preferences).{RESET}\n")
+            continue
+        elif cmd_lower == '/voice':
+            VOICE_ENABLED = not VOICE_ENABLED
+            app_cfg['voice_enabled'] = VOICE_ENABLED
+            save_config(app_cfg)
+            if not VOICE_ENABLED:
+                stop_speech()
+            state = f"{GREEN}ENABLED 🔊{RESET}" if VOICE_ENABLED else f"{YELLOW}MUTED 🔇{RESET}"
+            print(f"\n{CYAN}[*] Voice talkback is now {state}. (Saved to preferences){RESET}\n")
+            if VOICE_ENABLED:
+                speak_text("Voice talkback enabled.")
+            continue
+
         # Utility commands
         elif cmd_lower in ('/mic', '/talk', '/listen'):
             handle_mic_input()
@@ -883,11 +1040,6 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
             history = [{"role": "system", "content": PERSONAS[current_mode]["prompt"]}]
             print(f"{GREEN}[✓] Conversation context reset.{RESET}\n")
             continue
-        elif cmd_lower == '/voice':
-            VOICE_ENABLED = not VOICE_ENABLED
-            state = "ENABLED" if VOICE_ENABLED else "DISABLED"
-            print(f"{CYAN}[*] Voice speech synthesis is now {state}.{RESET}\n")
-            continue
         elif cmd_lower in ('/sysinfo', '/hw'):
             print(f"\n{CYAN}{BOLD}Toughbook Hardware Diagnostics:{RESET}")
             subprocess.run("uname -a; uptime; free -h; df -h /; sensors 2>/dev/null || true", shell=True)
@@ -895,18 +1047,19 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
             continue
         elif cmd_lower in ('/help', '/?'):
             print(f"\n{CYAN}{BOLD}Revenant Field Agent Commands:{RESET}")
-            print(f"  {BOLD}/mechanic{RESET}    Switch to Automotive OBD-II DTC & CAN Bus mode")
-            print(f"  {BOLD}/electronics{RESET} Switch to Circuit Board, Multimeter & Microcontroller mode")
-            print(f"  {BOLD}/sysadmin{RESET}    Switch to Linux Recovery, Network & Serial Comms mode")
-            print(f"  {BOLD}/general{RESET}     Switch to General Computing & Scripting mode")
-            print(f"  {BOLD}/cloud{RESET}       Toggle OmniRoute / Cloud API (free APIs or OpenRouter)")
-            print(f"  {BOLD}/local{RESET}       Toggle 100% Offline Local 3B Model")
-            print(f"  {BOLD}/remember <text>{RESET} Save knowledge/facts into OpenViking memory")
-            print(f"  {BOLD}/recall <query>{RESET}  Search OpenViking memory database")
-            print(f"  {BOLD}/mic{RESET}         Record 5s query from Toughbook microphone")
-            print(f"  {BOLD}/voice{RESET}       Toggle Piper speech synthesis")
-            print(f"  {BOLD}/clear{RESET}       Clear conversation context")
-            print(f"  {BOLD}exit{RESET}         Exit agent\n")
+            print(f"  {BOLD}/mechanic{RESET}        Switch to Automotive OBD-II DTC & CAN Bus mode")
+            print(f"  {BOLD}/electronics{RESET}     Switch to Circuit Board, Multimeter & Microcontroller mode")
+            print(f"  {BOLD}/sysadmin{RESET}        Switch to Linux Recovery, Network & Serial Comms mode")
+            print(f"  {BOLD}/general{RESET}         Switch to General Computing & Scripting mode")
+            print(f"  {BOLD}/voice [on/off]{RESET}   Toggle or set Piper voice talkback (persisted)")
+            print(f"  {BOLD}/cloud{RESET}           Toggle OmniRoute / Cloud API (free APIs or OpenRouter)")
+            print(f"  {BOLD}/local{RESET}           Toggle 100% Offline Local 3B Model")
+            print(f"  {BOLD}/remember <text>{RESET}  Save knowledge/facts into OpenViking memory")
+            print(f"  {BOLD}/recall <query>{RESET}   Search OpenViking memory database")
+            print(f"  {BOLD}/mic{RESET}             Record 5s query from Toughbook microphone")
+            print(f"  {BOLD}/clear{RESET}           Clear conversation context")
+            print(f"  {BOLD}<Esc> / Ctrl+C{RESET}   Instantly cancel thinking or speech")
+            print(f"  {BOLD}exit{RESET}             Exit agent\n")
             continue
 
         # Query OpenViking for relevant memory context
@@ -921,9 +1074,11 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
             history = [history[0]] + history[-10:]
 
         eng_label = "Local 3B" if current_engine == "local" else "OmniRoute/Cloud"
-        print(f"\n{CYAN}[Revenant Agent Thinking ({eng_label})...]{RESET}")
+        print(f"\n{CYAN}[Revenant Agent Thinking ({eng_label})... (Press <Esc> to cancel)]{RESET}")
         try:
             response = call_model(history)
+            if not response:
+                continue
             history.append({"role": "assistant", "content": response})
             speak_text(response)
 
@@ -933,11 +1088,16 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
                 history.append({"role": "user", "content": f"Tool execution result:\n{result}"})
                 print(f"\n{CYAN}[Revenant Agent Analyzing Result...]{RESET}")
                 followup = call_model(history, max_tokens=256)
-                history.append({"role": "assistant", "content": followup})
-                speak_text(followup)
+                if followup:
+                    history.append({"role": "assistant", "content": followup})
+                    speak_text(followup)
 
             print()
 
+        except (StreamCancelled, KeyboardInterrupt):
+            stop_speech()
+            print(f"\n{YELLOW}[!] Request cancelled by user (<Esc> / Ctrl+C).{RESET}\n")
+            continue
         except urllib.error.URLError as e:
             print(f"\n{RED}[!] Cannot connect to inference engine: {e}{RESET}")
             print(f"{YELLOW}Ensure llama-server or OmniRoute is active: sudo systemctl restart llama-server{RESET}\n")
@@ -1702,7 +1862,7 @@ zenity --question --title="Confirm Installation" \
   --ok-label="Yes, Erase & Install" --cancel-label="Cancel" || exit 0
 
 LOG="/tmp/revenant_install.log"
-echo "=== Revenant OS 1.1 (Build 19.7) Installation Started ===" > "$LOG"
+echo "=== Revenant OS 1.1 (Build 19.8) Installation Started ===" > "$LOG"
 date >> "$LOG"
 
 (
@@ -2058,7 +2218,7 @@ insmod ext2
 set root='hd0,msdos1'
 search --no-floppy --fs-uuid --set=root $UUID
 
-menuentry "Revenant OS 1.1 (Build 19.7) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 19.8) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -2067,7 +2227,7 @@ menuentry "Revenant OS 1.1 (Build 19.7) - Agentic Linux" --class debian --class 
     initrd /boot/$INITRD
 }
 
-menuentry "Revenant OS 1.1 (Build 19.7) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 19.8) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -2091,11 +2251,11 @@ umount -l /mnt/target/dev 2>/dev/null || true
 umount -l /mnt/target 2>/dev/null || true
 
 echo "100"; echo "# Installation Complete!"
-) | zenity --progress --title="Installing Revenant OS 1.1 (Build 19.7)" --text="Starting installation..." --percentage=0 --auto-close
+) | zenity --progress --title="Installing Revenant OS 1.1 (Build 19.8)" --text="Starting installation..." --percentage=0 --auto-close
 
 if [ -f "$LOG" ] && grep -iq "Installing for i386-pc platform" "$LOG"; then
   zenity --info --title="Success" \
-    --text="<b>Revenant OS 1.1 (Build 19.7) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
+    --text="<b>Revenant OS 1.1 (Build 19.8) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
 else
   zenity --error --title="Error" \
     --text="An error occurred during installation. Check /tmp/revenant_install.log or the target drive."
@@ -2123,12 +2283,12 @@ if background_image /boot/grub/splash.png; then
   set color_highlight=cyan/black
 fi
 
-menuentry "Revenant OS 1.1 (Build 19.7) - Unified Field Agent (Offline Voice + Local 3B + OpenViking Memory)" {
+menuentry "Revenant OS 1.1 (Build 19.8) - Unified Field Agent (Offline Voice + Local 3B + OpenViking Memory)" {
     linux /live/vmlinuz boot=live components quiet splash
     initrd /live/initrd.img
 }
 
-menuentry "Revenant OS 1.1 (Build 19.7) (Safe Graphics / Failsafe)" {
+menuentry "Revenant OS 1.1 (Build 19.8) (Safe Graphics / Failsafe)" {
     linux /live/vmlinuz boot=live components nomodeset
     initrd /live/initrd.img
 }
@@ -2137,13 +2297,13 @@ EOF
 echo "[*] Packaging patched SquashFS (xz compression)..."
 mksquashfs "$PATCH_ROOT" "$WORKSPACE_DIR/image/live/filesystem.squashfs" -comp xz
 
-echo "[*] Building 1.1 Build 19.7 ISO with hybrid bootloader..."
-grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 19.7)"
+echo "[*] Building 1.1 Build 19.8 ISO with hybrid bootloader..."
+grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 19.8)"
 cp -f "$ISO_TARGET" "$ISO_ALIAS"
 
 echo "[*] Cleaning up workspace..."
 rm -rf "$WORKSPACE_DIR" "$PATCH_ROOT"
 
-echo "[*] Build Complete! Revenant OS 1.1 (Build 19.7) ISO ready at: $ISO_TARGET"
+echo "[*] Build Complete! Revenant OS 1.1 (Build 19.8) ISO ready at: $ISO_TARGET"
 ls -lh "$ISO_TARGET" "$ISO_ALIAS"
 
