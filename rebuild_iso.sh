@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="/var/tmp/toughbook_rebuild_1_1"
 PATCH_ROOT="/var/tmp/patch_root_1_1"
 ISO_SOURCE="$SCRIPT_DIR/revenant_os_toughbook_v15_5.iso"
-ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build19.4.iso"
+ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build19.5.iso"
 ISO_ALIAS="$SCRIPT_DIR/revenant_os_latest.iso"
 CACHE_DIR="/var/tmp/revenant_cache"
 
@@ -720,10 +720,7 @@ fi
 # Install Pi Coding Agent globally into Node runtime
 if [ -x "$PATCH_ROOT/opt/node/bin/npm" ]; then
   echo "[*] Installing @earendil-works/pi-coding-agent into system runtime..."
-  chroot "$PATCH_ROOT" /opt/node/bin/npm install -g @earendil-works/pi-coding-agent 2>/dev/null || true
-  if [ -f "$PATCH_ROOT/opt/node/bin/pi" ]; then
-    ln -sf /opt/node/bin/pi "$PATCH_ROOT/usr/local/bin/pi"
-  fi
+  chroot "$PATCH_ROOT" /opt/node/bin/npm install -g --force @earendil-works/pi-coding-agent 2>/dev/null || true
 fi
 
 # Purge any legacy OpenCode binaries, wrappers, and configurations
@@ -808,6 +805,9 @@ PI_SETTINGS_EOF
   cp -f "$PATCH_ROOT/usr/share/revenant/prompts/"*.md "$pi_base/prompts/" 2>/dev/null || true
 done
 
+# Clean any existing pi wrapper/link to prevent overwriting opt/node/bin/pi
+rm -f "$PATCH_ROOT/usr/local/bin/pi" "$PATCH_ROOT/usr/local/bin/pi-agent"
+
 # Wrapper script for pi ensuring Node runtime is on PATH, offline mode is enforced, and llama-server is healthy
 cat << 'PI_WRAPPER_EOF' > "$PATCH_ROOT/usr/local/bin/pi"
 #!/usr/bin/env bash
@@ -818,6 +818,7 @@ export PI_TELEMETRY=0
 CYAN="\033[1;36m"
 GREEN="\033[1;32m"
 YELLOW="\033[1;33m"
+RED="\033[1;31m"
 RESET="\033[0m"
 
 # Print instant startup banner so the terminal is never blank
@@ -841,19 +842,16 @@ if ! curl -s -f -m 1 "http://127.0.0.1:8080/health" >/dev/null 2>&1 && ! curl -s
   echo ""
 fi
 
-PI_BIN=""
-if [ -x /opt/node/bin/pi ]; then
-  PI_BIN="/opt/node/bin/pi"
-elif command -v pi >/dev/null 2>&1 && [ "$(which pi)" != "/usr/local/bin/pi" ]; then
-  PI_BIN="$(which pi)"
-fi
+PI_CLI="/opt/node/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
 
-if [ -z "$PI_BIN" ]; then
-  echo -e "${YELLOW}[!] Pi Agent binary not found in /opt/node/bin/pi.${RESET}"
-  PI_BIN="/opt/node/bin/pi"
+if [ -f "$PI_CLI" ]; then
+  exec /opt/node/bin/node "$PI_CLI" --offline --provider revenant-local --model qwen2.5-coder-1.5b-instruct "$@"
+elif [ -x /opt/node/bin/pi ] && ! grep -q "PI_WRAPPER" /opt/node/bin/pi 2>/dev/null; then
+  exec /opt/node/bin/pi --offline --provider revenant-local --model qwen2.5-coder-1.5b-instruct "$@"
+else
+  echo -e "${RED}[!] Pi Agent CLI bundle not found in /opt/node.${RESET}"
+  exec /opt/node/bin/node "$PI_CLI" --offline --provider revenant-local --model qwen2.5-coder-1.5b-instruct "$@"
 fi
-
-exec "$PI_BIN" --offline --provider revenant-local --model qwen2.5-coder-1.5b-instruct "$@"
 PI_WRAPPER_EOF
 chmod +x "$PATCH_ROOT/usr/local/bin/pi"
 
@@ -1596,7 +1594,7 @@ zenity --question --title="Confirm Installation" \
   --ok-label="Yes, Erase & Install" --cancel-label="Cancel" || exit 0
 
 LOG="/tmp/revenant_install.log"
-echo "=== Revenant OS 1.1 (Build 19.4) Installation Started ===" > "$LOG"
+echo "=== Revenant OS 1.1 (Build 19.5) Installation Started ===" > "$LOG"
 date >> "$LOG"
 
 (
@@ -1960,7 +1958,7 @@ insmod ext2
 set root='hd0,msdos1'
 search --no-floppy --fs-uuid --set=root $UUID
 
-menuentry "Revenant OS 1.1 (Build 19.4) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 19.5) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -1969,7 +1967,7 @@ menuentry "Revenant OS 1.1 (Build 19.4) - Agentic Linux" --class debian --class 
     initrd /boot/$INITRD
 }
 
-menuentry "Revenant OS 1.1 (Build 19.4) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 19.5) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -1993,11 +1991,11 @@ umount -l /mnt/target/dev 2>/dev/null || true
 umount -l /mnt/target 2>/dev/null || true
 
 echo "100"; echo "# Installation Complete!"
-) | zenity --progress --title="Installing Revenant OS 1.1 (Build 19.4)" --text="Starting installation..." --percentage=0 --auto-close
+) | zenity --progress --title="Installing Revenant OS 1.1 (Build 19.5)" --text="Starting installation..." --percentage=0 --auto-close
 
 if [ -f "$LOG" ] && grep -iq "Installing for i386-pc platform" "$LOG"; then
   zenity --info --title="Success" \
-    --text="<b>Revenant OS 1.1 (Build 19.4) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
+    --text="<b>Revenant OS 1.1 (Build 19.5) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
 else
   zenity --error --title="Error" \
     --text="An error occurred during installation. Check /tmp/revenant_install.log or the target drive."
@@ -2025,12 +2023,12 @@ if background_image /boot/grub/splash.png; then
   set color_highlight=cyan/black
 fi
 
-menuentry "Revenant OS 1.1 (Build 19.4) - Agentic Core (Offline Voice + Local LLM + Pi Agent)" {
+menuentry "Revenant OS 1.1 (Build 19.5) - Agentic Core (Offline Voice + Local LLM + Pi Agent)" {
     linux /live/vmlinuz boot=live components quiet splash
     initrd /live/initrd.img
 }
 
-menuentry "Revenant OS 1.1 (Build 19.4) (Safe Graphics / Failsafe)" {
+menuentry "Revenant OS 1.1 (Build 19.5) (Safe Graphics / Failsafe)" {
     linux /live/vmlinuz boot=live components nomodeset
     initrd /live/initrd.img
 }
@@ -2039,13 +2037,13 @@ EOF
 echo "[*] Packaging patched SquashFS (xz compression)..."
 mksquashfs "$PATCH_ROOT" "$WORKSPACE_DIR/image/live/filesystem.squashfs" -comp xz
 
-echo "[*] Building 1.1 Build 19.4 ISO with hybrid bootloader..."
-grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 19.4)"
+echo "[*] Building 1.1 Build 19.5 ISO with hybrid bootloader..."
+grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 19.5)"
 cp -f "$ISO_TARGET" "$ISO_ALIAS"
 
 echo "[*] Cleaning up workspace..."
 rm -rf "$WORKSPACE_DIR" "$PATCH_ROOT"
 
-echo "[*] Build Complete! Revenant OS 1.1 (Build 19.4) ISO ready at: $ISO_TARGET"
+echo "[*] Build Complete! Revenant OS 1.1 (Build 19.5) ISO ready at: $ISO_TARGET"
 ls -lh "$ISO_TARGET" "$ISO_ALIAS"
 
