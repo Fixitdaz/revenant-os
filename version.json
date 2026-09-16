@@ -1,8 +1,8 @@
 {
   "os_name": "Revenant OS",
   "version": "1.1.0",
-  "build": "19.8",
-  "display": "Revenant OS 1.1 (Build 19.8 - Interactive Control & Voice Edition)",
+  "build": "19.9",
+  "display": "Revenant OS 1.1 (Build 19.9 - On-Demand OmniRoute & RAM Preserver)",
   "channel": "beta",
   "target_hardware": "Panasonic Toughbook CF-52 & Field Laptops",
   "release_date": "2026-09-16",
@@ -24,6 +24,7 @@
     "whisper_stt": "whisper.cpp-tiny.en",
     "piper_tts": "2023.11.14-2",
     "open_interpreter": "latest",
-    "openviking": "active"
+    "openviking": "active",
+    "omniroute": "on-demand"
   }
 }

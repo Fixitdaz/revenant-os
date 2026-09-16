@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="/var/tmp/toughbook_rebuild_1_1"
 PATCH_ROOT="/var/tmp/patch_root_1_1"
 ISO_SOURCE="$SCRIPT_DIR/revenant_os_toughbook_v15_5.iso"
-ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build19.8.iso"
+ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build19.9.iso"
 ISO_ALIAS="$SCRIPT_DIR/revenant_os_latest.iso"
 CACHE_DIR="/var/tmp/revenant_cache"
 
@@ -175,9 +175,8 @@ CFG_EOF
 
 echo "[*] Purging legacy services and background agents..."
 rm -f "$PATCH_ROOT/etc/systemd/system/omniroute.service"
-rm -f "$PATCH_ROOT/usr/local/bin/omniroute" "$PATCH_ROOT/usr/bin/omniroute"
 rm -f "$PATCH_ROOT/usr/local/bin/hermes" "$PATCH_ROOT/usr/bin/hermes"
-rm -rf "$PATCH_ROOT/usr/lib/node_modules/hermes-agent" "$PATCH_ROOT/usr/lib/node_modules/omniroute"
+rm -rf "$PATCH_ROOT/usr/lib/node_modules/hermes-agent"
 for target_dir in "$PATCH_ROOT/root/.hermes" "$PATCH_ROOT/etc/skel/.hermes" "$PATCH_ROOT/home/user/.hermes" "$PATCH_ROOT/home/revenant/.hermes"; do
   rm -rf "$target_dir"
 done
@@ -627,6 +626,72 @@ def save_cloud_config(conf):
     except Exception:
         pass
 
+def is_omniroute_running():
+    try:
+        req = urllib.request.Request("http://127.0.0.1:20128", method="GET")
+        with urllib.request.urlopen(req, timeout=0.8):
+            return True
+    except Exception:
+        try:
+            res = subprocess.run(["pgrep", "-f", "omniroute"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return res.returncode == 0
+        except Exception:
+            return False
+
+def start_omniroute(wait_for_ready=True):
+    if is_omniroute_running():
+        return True
+    omni_bin = shutil.which("omniroute") or "/usr/local/bin/omniroute" or "/opt/node/bin/omniroute" or "/usr/bin/omniroute"
+    if not (os.path.exists(omni_bin) or shutil.which("omniroute")):
+        print(f"\n{RED}[!] OmniRoute is not installed.{RESET}")
+        print(f"{YELLOW}To install, run: sudo npm install -g omniroute{RESET}\n")
+        return False
+
+    print(f"\n{CYAN}[*] Starting OmniRoute server on port 20128 (on-demand)...{RESET}")
+    try:
+        subprocess.Popen(
+            [omni_bin],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
+    except Exception as e:
+        print(f"{RED}[!] Failed to spawn OmniRoute process: {e}{RESET}")
+        return False
+
+    if wait_for_ready:
+        print(f"{DIM}Waiting for OmniRoute Web UI to initialize...{RESET} ", end="", flush=True)
+        for _ in range(12):
+            time.sleep(0.5)
+            try:
+                req = urllib.request.Request("http://127.0.0.1:20128", method="GET")
+                with urllib.request.urlopen(req, timeout=0.5):
+                    print(f"{GREEN}Ready!{RESET}")
+                    return True
+            except Exception:
+                print(f"{CYAN}.{RESET}", end="", flush=True)
+        print(f"\n{YELLOW}[!] Started OmniRoute in background. If Web UI is still loading, wait a moment.{RESET}")
+    return True
+
+def stop_omniroute(announce=True):
+    try:
+        res = subprocess.run(["pgrep", "-f", "omniroute"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if res.returncode != 0:
+            return True
+        if announce:
+            print(f"\n{YELLOW}[*] Shutting down OmniRoute server cleanly...{RESET}")
+        subprocess.run(["pkill", "-TERM", "-f", "omniroute"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        time.sleep(0.5)
+        subprocess.run(["pkill", "-9", "-f", "omniroute"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if announce:
+            print(f"{GREEN}[✓] OmniRoute stopped. Node.js RAM reclaimed for local model.{RESET}\n")
+        return True
+    except Exception as e:
+        if announce:
+            print(f"{RED}[!] Error stopping OmniRoute: {e}{RESET}")
+        return False
+
+
 def query_openviking(query, timeout=2.0):
     if not query or len(query.strip()) < 4:
         return ""
@@ -842,12 +907,25 @@ def print_banner():
     predict_str = f"{GREEN}Fish Autosuggest Active{RESET}" if PROMPT_TOOLKIT_AVAILABLE else f"{DIM}Readline Mode{RESET}"
     print(f"{DIM}Engine: [{eng_str}{DIM}] | Memory: [{GREEN}OpenViking Active{RESET}{DIM}] | [{voice_str}{DIM}] | Mode: [{col}{p['name']}{RESET}{DIM}]{RESET}")
     print(f"{DIM}Predictive: [{predict_str}{DIM}] (Press → to accept suggestions | Press <Esc> to cancel thinking){RESET}")
-    print(f"{CYAN}OmniRoute Web UI: http://localhost:20128 (Open in browser to configure free APIs){RESET}")
+    if current_engine == "cloud":
+        omni_stat = f"{GREEN}ONLINE 🌐{RESET}" if is_omniroute_running() else f"{YELLOW}STANDBY{RESET}"
+        print(f"{CYAN}OmniRoute Web UI: http://localhost:20128 [{omni_stat}{CYAN}] (Configure free APIs in browser){RESET}")
+    else:
+        print(f"{CYAN}OmniRoute: Standby (Auto-boots on /cloud at http://localhost:20128 to preserve RAM){RESET}")
     print(f"{DIM}Commands: /mechanic | /electronics | /sysadmin | /voice on/off | /cloud | /local | /remember | /recall{RESET}")
     print(f"{CYAN}Hotkeys:  Press <Super>+M anytime to speak directly into this window.{RESET}\n")
 
 def run_agent_loop(initial_prompt=None, initial_mic=False):
     global VOICE_ENABLED, mic_requested, current_mode, current_engine, app_cfg
+
+    # Ensure OmniRoute is stopped cleanly on exit to preserve Toughbook RAM
+    atexit.register(lambda: stop_omniroute(announce=False))
+
+    if current_engine == "cloud":
+        conf = load_cloud_config()
+        if "localhost:20128" in conf.get("base_url", "") or "127.0.0.1:20128" in conf.get("base_url", ""):
+            start_omniroute()
+
     print_banner()
 
     history = [
@@ -856,7 +934,7 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
 
     slash_commands = [
         '/mechanic', '/electronics', '/sysadmin', '/general',
-        '/cloud', '/cloud config', '/local',
+        '/cloud', '/cloud start', '/cloud stop', '/cloud config', '/local',
         '/remember', '/recall',
         '/voice', '/voice on', '/voice off', '/mute', '/unmute',
         '/mic', '/talk', '/listen', '/clear', '/sysinfo', '/hw', '/help', 'exit', 'quit'
@@ -922,6 +1000,7 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
 
         cmd_lower = user_input.lower()
         if cmd_lower in ('exit', 'quit', ':q'):
+            stop_omniroute(announce=False)
             print(f"\n{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
             break
 
@@ -960,13 +1039,20 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
             continue
 
         # Engine switching: OmniRoute / Cloud vs Local
-        elif cmd_lower in ('/cloud', '/omniroute'):
+        elif cmd_lower in ('/cloud', '/omniroute', '/cloud on', '/cloud start', '/omniroute start'):
             current_engine = "cloud"
             conf = load_cloud_config()
             print(f"\n{CYAN}[✓] Switched to OmniRoute / Cloud Engine.{RESET}")
+            if "localhost:20128" in conf.get("base_url", "") or "127.0.0.1:20128" in conf.get("base_url", ""):
+                start_omniroute()
             print(f"{DIM}Endpoint: {conf['base_url']} | Model: {conf['model']}{RESET}")
             print(f"{CYAN}OmniRoute Web UI: http://localhost:20128 (Configure free APIs in browser){RESET}")
-            print(f"{DIM}(Type /local to return to offline CPU or /cloud config to edit settings){RESET}\n")
+            print(f"{DIM}(Type /local to return to offline CPU, /cloud stop to shut down server, or /cloud config){RESET}\n")
+            continue
+        elif cmd_lower in ('/cloud stop', '/cloud off', '/omniroute stop'):
+            stop_omniroute()
+            current_engine = "local"
+            print(f"\n{GREEN}[✓] OmniRoute server stopped. Switched to Offline Local Neural Engine (Qwen 2.5 Coder 3B).{RESET}\n")
             continue
         elif cmd_lower.startswith('/cloud config') or cmd_lower.startswith('/cloud setup'):
             conf = load_cloud_config()
@@ -985,7 +1071,8 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
             continue
         elif cmd_lower == '/local':
             current_engine = "local"
-            print(f"\n{GREEN}[✓] Switched to Offline Local Neural Engine (Qwen 2.5 Coder 3B).{RESET}\n")
+            stop_omniroute()
+            print(f"\n{GREEN}[✓] Switched to Offline Local Neural Engine (Qwen 2.5 Coder 3B). OmniRoute stopped.{RESET}\n")
             continue
 
         # Memory commands
@@ -1052,8 +1139,8 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
             print(f"  {BOLD}/sysadmin{RESET}        Switch to Linux Recovery, Network & Serial Comms mode")
             print(f"  {BOLD}/general{RESET}         Switch to General Computing & Scripting mode")
             print(f"  {BOLD}/voice [on/off]{RESET}   Toggle or set Piper voice talkback (persisted)")
-            print(f"  {BOLD}/cloud{RESET}           Toggle OmniRoute / Cloud API (free APIs or OpenRouter)")
-            print(f"  {BOLD}/local{RESET}           Toggle 100% Offline Local 3B Model")
+            print(f"  {BOLD}/cloud [start/stop]{RESET} Toggle or manage OmniRoute / Cloud API (RAM-managed)")
+            print(f"  {BOLD}/local{RESET}           Switch to Offline Local 3B Model (shuts down OmniRoute)")
             print(f"  {BOLD}/remember <text>{RESET}  Save knowledge/facts into OpenViking memory")
             print(f"  {BOLD}/recall <query>{RESET}   Search OpenViking memory database")
             print(f"  {BOLD}/mic{RESET}             Record 5s query from Toughbook microphone")
@@ -1160,7 +1247,46 @@ if [ -f "$NODE_TAR" ]; then
   ln -sf /opt/node/bin/node "$PATCH_ROOT/usr/local/bin/node"
   ln -sf /opt/node/bin/npm "$PATCH_ROOT/usr/local/bin/npm"
   ln -sf /opt/node/bin/npx "$PATCH_ROOT/usr/local/bin/npx"
+
+  echo "[*] Provisioning OmniRoute API gateway for on-demand cloud routing..."
+  chroot "$PATCH_ROOT" /usr/local/bin/npm install -g omniroute 2>/dev/null || true
+  if [ -f "$PATCH_ROOT/opt/node/bin/omniroute" ]; then
+    ln -sf /opt/node/bin/omniroute "$PATCH_ROOT/usr/local/bin/omniroute"
+  fi
 fi
+
+# Deploy standalone on-demand OmniRoute control scripts
+cat << 'OMNI_START_EOF' > "$PATCH_ROOT/usr/local/bin/omniroute-start"
+#!/usr/bin/env bash
+echo -e "\033[96m[*] Starting OmniRoute server on port 20128...\033[0m"
+OMNI_BIN=$(command -v omniroute || echo "/opt/node/bin/omniroute")
+if [ -x "$OMNI_BIN" ] || command -v omniroute >/dev/null 2>&1; then
+  pkill -f omniroute 2>/dev/null || true
+  nohup "$OMNI_BIN" >/var/log/omniroute.log 2>&1 &
+  for i in {1..10}; do
+    if curl -s http://127.0.0.1:20128 >/dev/null 2>&1; then
+      echo -e "\033[92m[✓] OmniRoute is running!\033[0m Web UI: \033[1;96mhttp://localhost:20128\033[0m"
+      exit 0
+    fi
+    sleep 1
+  done
+  echo -e "\033[93m[!] OmniRoute process started in background. Check /var/log/omniroute.log\033[0m"
+else
+  echo -e "\033[91m[!] OmniRoute is not installed. Run: sudo npm install -g omniroute\033[0m"
+  exit 1
+fi
+OMNI_START_EOF
+chmod +x "$PATCH_ROOT/usr/local/bin/omniroute-start"
+
+cat << 'OMNI_STOP_EOF' > "$PATCH_ROOT/usr/local/bin/omniroute-stop"
+#!/usr/bin/env bash
+echo -e "\033[93m[*] Stopping OmniRoute server and reclaiming RAM...\033[0m"
+pkill -TERM -f omniroute 2>/dev/null || true
+sleep 1
+pkill -9 -f omniroute 2>/dev/null || true
+echo -e "\033[92m[✓] OmniRoute stopped cleanly. RAM reclaimed.\033[0m"
+OMNI_STOP_EOF
+chmod +x "$PATCH_ROOT/usr/local/bin/omniroute-stop" 
 
 # Purge any legacy OpenCode and Pi Agent binaries, wrappers, and configurations
 rm -f "$PATCH_ROOT/usr/local/bin/opencode" "$PATCH_ROOT/usr/local/bin/revenant-opencode" "$PATCH_ROOT/usr/share/applications/opencode.desktop"
@@ -1862,7 +1988,7 @@ zenity --question --title="Confirm Installation" \
   --ok-label="Yes, Erase & Install" --cancel-label="Cancel" || exit 0
 
 LOG="/tmp/revenant_install.log"
-echo "=== Revenant OS 1.1 (Build 19.8) Installation Started ===" > "$LOG"
+echo "=== Revenant OS 1.1 (Build 19.9) Installation Started ===" > "$LOG"
 date >> "$LOG"
 
 (
@@ -2218,7 +2344,7 @@ insmod ext2
 set root='hd0,msdos1'
 search --no-floppy --fs-uuid --set=root $UUID
 
-menuentry "Revenant OS 1.1 (Build 19.8) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 19.9) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -2227,7 +2353,7 @@ menuentry "Revenant OS 1.1 (Build 19.8) - Agentic Linux" --class debian --class 
     initrd /boot/$INITRD
 }
 
-menuentry "Revenant OS 1.1 (Build 19.8) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 19.9) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -2251,11 +2377,11 @@ umount -l /mnt/target/dev 2>/dev/null || true
 umount -l /mnt/target 2>/dev/null || true
 
 echo "100"; echo "# Installation Complete!"
-) | zenity --progress --title="Installing Revenant OS 1.1 (Build 19.8)" --text="Starting installation..." --percentage=0 --auto-close
+) | zenity --progress --title="Installing Revenant OS 1.1 (Build 19.9)" --text="Starting installation..." --percentage=0 --auto-close
 
 if [ -f "$LOG" ] && grep -iq "Installing for i386-pc platform" "$LOG"; then
   zenity --info --title="Success" \
-    --text="<b>Revenant OS 1.1 (Build 19.8) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
+    --text="<b>Revenant OS 1.1 (Build 19.9) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
 else
   zenity --error --title="Error" \
     --text="An error occurred during installation. Check /tmp/revenant_install.log or the target drive."
@@ -2283,12 +2409,12 @@ if background_image /boot/grub/splash.png; then
   set color_highlight=cyan/black
 fi
 
-menuentry "Revenant OS 1.1 (Build 19.8) - Unified Field Agent (Offline Voice + Local 3B + OpenViking Memory)" {
+menuentry "Revenant OS 1.1 (Build 19.9) - Unified Field Agent (Offline Voice + Local 3B + OpenViking Memory)" {
     linux /live/vmlinuz boot=live components quiet splash
     initrd /live/initrd.img
 }
 
-menuentry "Revenant OS 1.1 (Build 19.8) (Safe Graphics / Failsafe)" {
+menuentry "Revenant OS 1.1 (Build 19.9) (Safe Graphics / Failsafe)" {
     linux /live/vmlinuz boot=live components nomodeset
     initrd /live/initrd.img
 }
@@ -2297,13 +2423,13 @@ EOF
 echo "[*] Packaging patched SquashFS (xz compression)..."
 mksquashfs "$PATCH_ROOT" "$WORKSPACE_DIR/image/live/filesystem.squashfs" -comp xz
 
-echo "[*] Building 1.1 Build 19.8 ISO with hybrid bootloader..."
-grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 19.8)"
+echo "[*] Building 1.1 Build 19.9 ISO with hybrid bootloader..."
+grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 19.9)"
 cp -f "$ISO_TARGET" "$ISO_ALIAS"
 
 echo "[*] Cleaning up workspace..."
 rm -rf "$WORKSPACE_DIR" "$PATCH_ROOT"
 
-echo "[*] Build Complete! Revenant OS 1.1 (Build 19.8) ISO ready at: $ISO_TARGET"
+echo "[*] Build Complete! Revenant OS 1.1 (Build 19.9) ISO ready at: $ISO_TARGET"
 ls -lh "$ISO_TARGET" "$ISO_ALIAS"
 
