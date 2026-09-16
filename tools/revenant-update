@@ -943,44 +943,116 @@ for base_user_dir in /etc/skel /root /home/*; do
   fi
 done
 
-# Ensure Node.js v22 runtime is installed
-if ! command -v node >/dev/null 2>&1 || ! node -e 'const [m] = process.versions.node.split(".").map(Number); process.exit(m >= 22 ? 0 : 1)' 2>/dev/null; then
-  echo -e "${CYAN}  -> Downloading and installing Node.js v22 runtime...${RESET}"
+# Ensure Node.js v22 (>= 22.19.0) runtime is installed
+if ! command -v node >/dev/null 2>&1 || ! node -e 'const [m, n] = process.versions.node.split(".").map(Number); process.exit(m > 22 || (m === 22 && n >= 19) ? 0 : 1)' 2>/dev/null; then
+  echo -e "${CYAN}  -> Downloading and installing Node.js v22.23.2 runtime...${RESET}"
   mkdir -p /opt/node /tmp/node_dl
-  if curl -fsSL -L --connect-timeout 20 "https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-x64.tar.xz" -o /tmp/node_dl/node.tar.xz; then
+  if curl -fsSL -L --connect-timeout 20 "https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.xz" -o /tmp/node_dl/node.tar.xz; then
     tar -xJf /tmp/node_dl/node.tar.xz --strip-components=1 -C /opt/node 2>/dev/null || true
     ln -sf /opt/node/bin/node /usr/local/bin/node
     ln -sf /opt/node/bin/npm /usr/local/bin/npm
     ln -sf /opt/node/bin/npx /usr/local/bin/npx
-    echo -e "${GREEN}[✓] Node.js $(/opt/node/bin/node -v 2>/dev/null || echo 'v22') runtime installed.${RESET}"
+    echo -e "${GREEN}[✓] Node.js $(/opt/node/bin/node -v 2>/dev/null || echo 'v22.23.2') runtime installed.${RESET}"
   fi
   rm -rf /tmp/node_dl
 fi
 
 # Install Pi Coding Agent globally
-if ! command -v pi >/dev/null 2>&1 || [ "$FORCE" = true ]; then
+if [ ! -x /opt/node/bin/pi ] || [ "$FORCE" = true ]; then
   echo -e "${CYAN}  -> Installing @earendil-works/pi-coding-agent...${RESET}"
   if [ -x /opt/node/bin/npm ]; then
-    /opt/node/bin/npm install -g --ignore-scripts @earendil-works/pi-coding-agent 2>/dev/null || true
+    /opt/node/bin/npm install -g @earendil-works/pi-coding-agent 2>/dev/null || true
     if [ -f /opt/node/bin/pi ]; then
       ln -sf /opt/node/bin/pi /usr/local/bin/pi
     fi
   else
-    npm install -g --ignore-scripts @earendil-works/pi-coding-agent 2>/dev/null || true
+    npm install -g @earendil-works/pi-coding-agent 2>/dev/null || true
   fi
 fi
 
-# Wrapper script for pi ensuring Node runtime is on PATH
+# System-wide prompt repository for offline field personas
+mkdir -p /usr/share/revenant/prompts
+
+cat << 'PROMPT_MECHANIC_GLOBAL_EOF' > /usr/share/revenant/prompts/mechanic.md
+---
+description: Automotive & Motor Mechanic Field Diagnostics
+argument-hint: "[vehicle-or-DTC-code]"
+---
+You are the Revenant OS Motor Mechanic Field Diagnostic Agent on a Panasonic Toughbook.
+You specialize in automotive diagnostics, OBD-II DTC troubleshooting (P0xxx, P1xxx, Uxxxx, Bxxxx, Cxxxx), CAN bus analysis, diesel/petrol engine mechanical repair, electrical wiring traces, sensor testing (MAF, MAP, O2, TPS, CKP, CMP), starter/alternator/battery load tests, and component replacement sequences.
+Provide step-by-step, highly practical diagnostic procedures.
+Focus on: $ARGUMENTS
+PROMPT_MECHANIC_GLOBAL_EOF
+
+cat << 'PROMPT_ELECTRONICS_GLOBAL_EOF' > /usr/share/revenant/prompts/electronics.md
+---
+description: Electronics Repair & Circuit Analysis
+argument-hint: "[circuit-or-component-fault]"
+---
+You are the Revenant OS Electronics Diagnostic Specialist on a Panasonic Toughbook.
+You specialize in circuit troubleshooting, board-level repair, semiconductor testing (MOSFETs, diodes, transistors, voltage regulators), multimeter/oscilloscope test points, schematic analysis, soldering/rework guidance, and microcontroller firmware (Arduino, ESP32, STM32, PIC).
+Provide clear, safe, component-level diagnostic steps and pinout details.
+Focus on: $ARGUMENTS
+PROMPT_ELECTRONICS_GLOBAL_EOF
+
+cat << 'PROMPT_SYSADMIN_GLOBAL_EOF' > /usr/share/revenant/prompts/sysadmin.md
+---
+description: Linux Field Engineering & Systems Administration
+argument-hint: "[service-or-system-issue]"
+---
+You are the Revenant OS Field Linux Systems Administrator on a Panasonic Toughbook.
+You specialize in Linux system recovery, network diagnostics (ip, ss, tcpdump, ping, ethtool), kernel module troubleshooting, serial interface configuration (/dev/ttyUSB*, /dev/ttyS*), disk and partition repair (fsck, parted, smartctl, dd), systemd service management, and rugged field automation.
+Provide exact, reliable terminal commands and concise technical explanations.
+Focus on: $ARGUMENTS
+PROMPT_SYSADMIN_GLOBAL_EOF
+
+# Wrapper script for pi ensuring Node runtime is on PATH, offline mode is enforced, and llama-server is healthy
 cat << 'PI_WRAPPER_EOF' > /usr/local/bin/pi
 #!/usr/bin/env bash
 export PATH="/opt/node/bin:$PATH"
-if [ -x /opt/node/bin/pi ]; then
-  exec /opt/node/bin/pi "$@"
-elif command -v pi >/dev/null 2>&1 && [ "$(which pi)" != "/usr/local/bin/pi" ]; then
-  exec "$(which pi)" "$@"
-else
-  exec npx --no-install @earendil-works/pi-coding-agent "$@"
+export PI_OFFLINE=1
+export PI_TELEMETRY=0
+
+CYAN="\033[1;36m"
+GREEN="\033[1;32m"
+YELLOW="\033[1;33m"
+RESET="\033[0m"
+
+# Print instant startup banner so the terminal is never blank
+echo -e "${CYAN}=======================================================${RESET}"
+echo -e "${GREEN}      Revenant OS - Local Agentic Environment          ${RESET}"
+echo -e "${CYAN}=======================================================${RESET}"
+
+# Verify local llama-server health on 127.0.0.1:8080
+if ! curl -s -f -m 1 "http://127.0.0.1:8080/health" >/dev/null 2>&1 && ! curl -s -f -m 1 "http://127.0.0.1:8080/v1/models" >/dev/null 2>&1; then
+  echo -e "${YELLOW}[*] Starting local neural inference engine (llama-server)...${RESET}"
+  systemctl start llama-server.service 2>/dev/null || sudo systemctl start llama-server.service 2>/dev/null || true
+
+  for i in $(seq 1 8); do
+    if curl -s -f -m 1 "http://127.0.0.1:8080/health" >/dev/null 2>&1 || curl -s -f -m 1 "http://127.0.0.1:8080/v1/models" >/dev/null 2>&1; then
+      echo -e "${GREEN}[✓] Neural inference engine online.${RESET}"
+      break
+    fi
+    echo -n "."
+    sleep 1
+  done
+  echo ""
 fi
+
+PI_BIN=""
+if [ -x /opt/node/bin/pi ]; then
+  PI_BIN="/opt/node/bin/pi"
+elif command -v pi >/dev/null 2>&1 && [ "$(which pi)" != "/usr/local/bin/pi" ]; then
+  PI_BIN="$(which pi)"
+fi
+
+if [ -z "$PI_BIN" ]; then
+  echo -e "${YELLOW}[!] Pi Agent binary not found. Running setup...${RESET}"
+  /opt/node/bin/npm install -g @earendil-works/pi-coding-agent
+  PI_BIN="/opt/node/bin/pi"
+fi
+
+exec "$PI_BIN" --offline --provider revenant-local --model qwen2.5-coder-1.5b-instruct "$@"
 PI_WRAPPER_EOF
 chmod +x /usr/local/bin/pi
 ln -sf /usr/local/bin/pi /usr/local/bin/pi-agent 2>/dev/null || true
@@ -1024,41 +1096,8 @@ PI_MODELS_EOF
 }
 PI_SETTINGS_EOF
 
-    # 3. Pi Motor Mechanic Prompt Template (/mechanic)
-    cat << 'PROMPT_MECHANIC_EOF' > "$pi_base/prompts/mechanic.md"
----
-description: Automotive & Motor Mechanic Field Diagnostics
-argument-hint: "[vehicle-or-DTC-code]"
----
-You are the Revenant OS Motor Mechanic Field Diagnostic Agent on a Panasonic Toughbook.
-You specialize in automotive diagnostics, OBD-II DTC troubleshooting (P0xxx, P1xxx, Uxxxx, Bxxxx, Cxxxx), CAN bus analysis, diesel/petrol engine mechanical repair, electrical wiring traces, sensor testing (MAF, MAP, O2, TPS, CKP, CMP), starter/alternator/battery load tests, and component replacement sequences.
-Provide step-by-step, highly practical diagnostic procedures.
-Focus on: $ARGUMENTS
-PROMPT_MECHANIC_EOF
-
-    # 4. Pi Electronics Specialist Prompt Template (/electronics)
-    cat << 'PROMPT_ELECTRONICS_EOF' > "$pi_base/prompts/electronics.md"
----
-description: Electronics Repair & Circuit Analysis
-argument-hint: "[circuit-or-component-fault]"
----
-You are the Revenant OS Electronics Diagnostic Specialist on a Panasonic Toughbook.
-You specialize in circuit troubleshooting, board-level repair, semiconductor testing (MOSFETs, diodes, transistors, voltage regulators), multimeter/oscilloscope test points, schematic analysis, soldering/rework guidance, and microcontroller firmware (Arduino, ESP32, STM32, PIC).
-Provide clear, safe, component-level diagnostic steps and pinout details.
-Focus on: $ARGUMENTS
-PROMPT_ELECTRONICS_EOF
-
-    # 5. Pi System Administrator Prompt Template (/sysadmin)
-    cat << 'PROMPT_SYSADMIN_EOF' > "$pi_base/prompts/sysadmin.md"
----
-description: Linux Field Engineering & Systems Administration
-argument-hint: "[service-or-system-issue]"
----
-You are the Revenant OS Field Linux Systems Administrator on a Panasonic Toughbook.
-You specialize in Linux system recovery, network diagnostics (ip, ss, tcpdump, ping, ethtool), kernel module troubleshooting, serial interface configuration (/dev/ttyUSB*, /dev/ttyS*), disk and partition repair (fsck, parted, smartctl, dd), systemd service management, and rugged field automation.
-Provide exact, reliable terminal commands and concise technical explanations.
-Focus on: $ARGUMENTS
-PROMPT_SYSADMIN_EOF
+    # Copy prompts into user template dir
+    cp -f /usr/share/revenant/prompts/*.md "$pi_base/prompts/" 2>/dev/null || true
 
     u_owner=$(stat -c '%u:%g' "$base_user_dir" 2>/dev/null || echo "1000:1000")
     chown -R "$u_owner" "$base_user_dir/.pi" 2>/dev/null || true
@@ -1068,33 +1107,72 @@ done
 # Specialized persona wrapper executables
 cat << 'WRAPPER_MECH_EOF' > /usr/local/bin/pi-mechanic
 #!/usr/bin/env bash
-export PATH="/opt/node/bin:$PATH"
-if [ -n "$*" ]; then
-  exec /usr/local/bin/pi "/mechanic $*"
+PROMPT_FILE="/usr/share/revenant/prompts/mechanic.md"
+[ -f "$HOME/.pi/agent/prompts/mechanic.md" ] && PROMPT_FILE="$HOME/.pi/agent/prompts/mechanic.md"
+
+PROMPT_TEXT=""
+if [ -f "$PROMPT_FILE" ]; then
+  PROMPT_TEXT=$(grep -v '^---' "$PROMPT_FILE" | grep -v '^description:' | grep -v '^argument-hint:' | sed '/./,$!d')
+fi
+
+echo -e "\033[1;36m=======================================================\033[0m"
+echo -e "\033[1;33m       Pi Motor Mechanic - Field Diagnostic Agent      \033[0m"
+echo -e "\033[1;36m=======================================================\033[0m"
+echo -e "Specialization: Automotive DTC (OBD-II), CAN Bus & Engine Repair"
+echo ""
+
+if [ $# -gt 0 ]; then
+  exec /usr/local/bin/pi --append-system-prompt "$PROMPT_TEXT" "$@"
 else
-  exec /usr/local/bin/pi "/mechanic"
+  exec /usr/local/bin/pi --append-system-prompt "$PROMPT_TEXT"
 fi
 WRAPPER_MECH_EOF
 chmod +x /usr/local/bin/pi-mechanic
 
 cat << 'WRAPPER_ELEC_EOF' > /usr/local/bin/pi-electronics
 #!/usr/bin/env bash
-export PATH="/opt/node/bin:$PATH"
-if [ -n "$*" ]; then
-  exec /usr/local/bin/pi "/electronics $*"
+PROMPT_FILE="/usr/share/revenant/prompts/electronics.md"
+[ -f "$HOME/.pi/agent/prompts/electronics.md" ] && PROMPT_FILE="$HOME/.pi/agent/prompts/electronics.md"
+
+PROMPT_TEXT=""
+if [ -f "$PROMPT_FILE" ]; then
+  PROMPT_TEXT=$(grep -v '^---' "$PROMPT_FILE" | grep -v '^description:' | grep -v '^argument-hint:' | sed '/./,$!d')
+fi
+
+echo -e "\033[1;36m=======================================================\033[0m"
+echo -e "\033[1;35m    Pi Electronics Specialist - Component Diagnostics  \033[0m"
+echo -e "\033[1;36m=======================================================\033[0m"
+echo -e "Specialization: Circuit Boards, Multimeter Test Points & Microcontrollers"
+echo ""
+
+if [ $# -gt 0 ]; then
+  exec /usr/local/bin/pi --append-system-prompt "$PROMPT_TEXT" "$@"
 else
-  exec /usr/local/bin/pi "/electronics"
+  exec /usr/local/bin/pi --append-system-prompt "$PROMPT_TEXT"
 fi
 WRAPPER_ELEC_EOF
 chmod +x /usr/local/bin/pi-electronics
 
 cat << 'WRAPPER_SYS_EOF' > /usr/local/bin/pi-sysadmin
 #!/usr/bin/env bash
-export PATH="/opt/node/bin:$PATH"
-if [ -n "$*" ]; then
-  exec /usr/local/bin/pi "/sysadmin $*"
+PROMPT_FILE="/usr/share/revenant/prompts/sysadmin.md"
+[ -f "$HOME/.pi/agent/prompts/sysadmin.md" ] && PROMPT_FILE="$HOME/.pi/agent/prompts/sysadmin.md"
+
+PROMPT_TEXT=""
+if [ -f "$PROMPT_FILE" ]; then
+  PROMPT_TEXT=$(grep -v '^---' "$PROMPT_FILE" | grep -v '^description:' | grep -v '^argument-hint:' | sed '/./,$!d')
+fi
+
+echo -e "\033[1;36m=======================================================\033[0m"
+echo -e "\033[1;32m      Pi System Admin - Field Linux Systems Recovery   \033[0m"
+echo -e "\033[1;36m=======================================================\033[0m"
+echo -e "Specialization: Network Troubleshooting, Serial Interfaces & System Recovery"
+echo ""
+
+if [ $# -gt 0 ]; then
+  exec /usr/local/bin/pi --append-system-prompt "$PROMPT_TEXT" "$@"
 else
-  exec /usr/local/bin/pi "/sysadmin"
+  exec /usr/local/bin/pi --append-system-prompt "$PROMPT_TEXT"
 fi
 WRAPPER_SYS_EOF
 chmod +x /usr/local/bin/pi-sysadmin

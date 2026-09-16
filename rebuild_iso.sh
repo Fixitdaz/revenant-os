@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="/var/tmp/toughbook_rebuild_1_1"
 PATCH_ROOT="/var/tmp/patch_root_1_1"
 ISO_SOURCE="$SCRIPT_DIR/revenant_os_toughbook_v15_5.iso"
-ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build19.3.iso"
+ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build19.4.iso"
 ISO_ALIAS="$SCRIPT_DIR/revenant_os_latest.iso"
 CACHE_DIR="/var/tmp/revenant_cache"
 
@@ -699,14 +699,14 @@ offline: true
 INTERP_CFG
 done
 
-echo "[*] Installing Node.js v22 runtime and Pi Coding Agent..."
-NODE_TAR="$CACHE_DIR/node-v22.14.0-linux-x64.tar.xz"
-if [ ! -f "$NODE_TAR" ] && [ -f "$SCRIPT_DIR/node-v22.14.0-linux-x64.tar.xz" ]; then
-  NODE_TAR="$SCRIPT_DIR/node-v22.14.0-linux-x64.tar.xz"
+echo "[*] Installing Node.js v22 (v22.23.2) runtime and Pi Coding Agent..."
+NODE_TAR="$CACHE_DIR/node-v22.23.2-linux-x64.tar.xz"
+if [ ! -f "$NODE_TAR" ] && [ -f "$SCRIPT_DIR/node-v22.23.2-linux-x64.tar.xz" ]; then
+  NODE_TAR="$SCRIPT_DIR/node-v22.23.2-linux-x64.tar.xz"
 elif [ ! -f "$NODE_TAR" ]; then
   mkdir -p "$CACHE_DIR"
-  echo "[*] Downloading Node.js v22 standalone runtime..."
-  wget -q --show-progress -c "https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-x64.tar.xz" -O "$CACHE_DIR/node-v22.14.0-linux-x64.tar.xz" || true
+  echo "[*] Downloading Node.js v22.23.2 standalone runtime..."
+  wget -q --show-progress -c "https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.xz" -O "$CACHE_DIR/node-v22.23.2-linux-x64.tar.xz" || true
 fi
 
 if [ -f "$NODE_TAR" ]; then
@@ -720,7 +720,7 @@ fi
 # Install Pi Coding Agent globally into Node runtime
 if [ -x "$PATCH_ROOT/opt/node/bin/npm" ]; then
   echo "[*] Installing @earendil-works/pi-coding-agent into system runtime..."
-  chroot "$PATCH_ROOT" /opt/node/bin/npm install -g --ignore-scripts @earendil-works/pi-coding-agent 2>/dev/null || true
+  chroot "$PATCH_ROOT" /opt/node/bin/npm install -g @earendil-works/pi-coding-agent 2>/dev/null || true
   if [ -f "$PATCH_ROOT/opt/node/bin/pi" ]; then
     ln -sf /opt/node/bin/pi "$PATCH_ROOT/usr/local/bin/pi"
   fi
@@ -730,6 +730,42 @@ fi
 rm -f "$PATCH_ROOT/usr/local/bin/opencode" "$PATCH_ROOT/usr/local/bin/revenant-opencode" "$PATCH_ROOT/usr/share/applications/opencode.desktop"
 rm -rf "$PATCH_ROOT/etc/skel/.config/opencode" "$PATCH_ROOT/home/user/.config/opencode" "$PATCH_ROOT/home/revenant/.config/opencode"
 rm -rf "$PATCH_ROOT/etc/skel/.local/state/opencode" "$PATCH_ROOT/home/user/.local/state/opencode" "$PATCH_ROOT/home/revenant/.local/state/opencode"
+
+# System-wide prompt repository for offline field personas
+mkdir -p "$PATCH_ROOT/usr/share/revenant/prompts"
+
+cat << 'PROMPT_MECHANIC_GLOBAL_EOF' > "$PATCH_ROOT/usr/share/revenant/prompts/mechanic.md"
+---
+description: Automotive & Motor Mechanic Field Diagnostics
+argument-hint: "[vehicle-or-DTC-code]"
+---
+You are the Revenant OS Motor Mechanic Field Diagnostic Agent on a Panasonic Toughbook.
+You specialize in automotive diagnostics, OBD-II DTC troubleshooting (P0xxx, P1xxx, Uxxxx, Bxxxx, Cxxxx), CAN bus analysis, diesel/petrol engine mechanical repair, electrical wiring traces, sensor testing (MAF, MAP, O2, TPS, CKP, CMP), starter/alternator/battery load tests, and component replacement sequences.
+Provide step-by-step, highly practical diagnostic procedures.
+Focus on: $ARGUMENTS
+PROMPT_MECHANIC_GLOBAL_EOF
+
+cat << 'PROMPT_ELECTRONICS_GLOBAL_EOF' > "$PATCH_ROOT/usr/share/revenant/prompts/electronics.md"
+---
+description: Electronics Repair & Circuit Analysis
+argument-hint: "[circuit-or-component-fault]"
+---
+You are the Revenant OS Electronics Diagnostic Specialist on a Panasonic Toughbook.
+You specialize in circuit troubleshooting, board-level repair, semiconductor testing (MOSFETs, diodes, transistors, voltage regulators), multimeter/oscilloscope test points, schematic analysis, soldering/rework guidance, and microcontroller firmware (Arduino, ESP32, STM32, PIC).
+Provide clear, safe, component-level diagnostic steps and pinout details.
+Focus on: $ARGUMENTS
+PROMPT_ELECTRONICS_GLOBAL_EOF
+
+cat << 'PROMPT_SYSADMIN_GLOBAL_EOF' > "$PATCH_ROOT/usr/share/revenant/prompts/sysadmin.md"
+---
+description: Linux Field Engineering & Systems Administration
+argument-hint: "[service-or-system-issue]"
+---
+You are the Revenant OS Field Linux Systems Administrator on a Panasonic Toughbook.
+You specialize in Linux system recovery, network diagnostics (ip, ss, tcpdump, ping, ethtool), kernel module troubleshooting, serial interface configuration (/dev/ttyUSB*, /dev/ttyS*), disk and partition repair (fsck, parted, smartctl, dd), systemd service management, and rugged field automation.
+Provide exact, reliable terminal commands and concise technical explanations.
+Focus on: $ARGUMENTS
+PROMPT_SYSADMIN_GLOBAL_EOF
 
 # Pre-seed Pi Agent configuration and specialized field prompts for all user profiles
 for pi_base in "$PATCH_ROOT/etc/skel/.pi/agent" "$PATCH_ROOT/home/user/.pi/agent" "$PATCH_ROOT/home/revenant/.pi/agent"; do
@@ -768,85 +804,128 @@ PI_MODELS_EOF
 }
 PI_SETTINGS_EOF
 
-  # 3. Pi Motor Mechanic Prompt Template (/mechanic)
-  cat << 'PROMPT_MECHANIC_EOF' > "$pi_base/prompts/mechanic.md"
----
-description: Automotive & Motor Mechanic Field Diagnostics
-argument-hint: "[vehicle-or-DTC-code]"
----
-You are the Revenant OS Motor Mechanic Field Diagnostic Agent on a Panasonic Toughbook.
-You specialize in automotive diagnostics, OBD-II DTC troubleshooting (P0xxx, P1xxx, Uxxxx, Bxxxx, Cxxxx), CAN bus analysis, diesel/petrol engine mechanical repair, electrical wiring traces, sensor testing (MAF, MAP, O2, TPS, CKP, CMP), starter/alternator/battery load tests, and component replacement sequences.
-Provide step-by-step, highly practical diagnostic procedures.
-Focus on: $ARGUMENTS
-PROMPT_MECHANIC_EOF
-
-  # 4. Pi Electronics Specialist Prompt Template (/electronics)
-  cat << 'PROMPT_ELECTRONICS_EOF' > "$pi_base/prompts/electronics.md"
----
-description: Electronics Repair & Circuit Analysis
-argument-hint: "[circuit-or-component-fault]"
----
-You are the Revenant OS Electronics Diagnostic Specialist on a Panasonic Toughbook.
-You specialize in circuit troubleshooting, board-level repair, semiconductor testing (MOSFETs, diodes, transistors, voltage regulators), multimeter/oscilloscope test points, schematic analysis, soldering/rework guidance, and microcontroller firmware (Arduino, ESP32, STM32, PIC).
-Provide clear, safe, component-level diagnostic steps and pinout details.
-Focus on: $ARGUMENTS
-PROMPT_ELECTRONICS_EOF
-
-  # 5. Pi System Administrator Prompt Template (/sysadmin)
-  cat << 'PROMPT_SYSADMIN_EOF' > "$pi_base/prompts/sysadmin.md"
----
-description: Linux Field Engineering & Systems Administration
-argument-hint: "[service-or-system-issue]"
----
-You are the Revenant OS Field Linux Systems Administrator on a Panasonic Toughbook.
-You specialize in Linux system recovery, network diagnostics (ip, ss, tcpdump, ping, ethtool), kernel module troubleshooting, serial interface configuration (/dev/ttyUSB*, /dev/ttyS*), disk and partition repair (fsck, parted, smartctl, dd), systemd service management, and rugged field automation.
-Provide exact, reliable terminal commands and concise technical explanations.
-Focus on: $ARGUMENTS
-PROMPT_SYSADMIN_EOF
+  # Copy prompts into profile template
+  cp -f "$PATCH_ROOT/usr/share/revenant/prompts/"*.md "$pi_base/prompts/" 2>/dev/null || true
 done
 
-# Wrapper script for pi ensuring Node runtime is on PATH
+# Wrapper script for pi ensuring Node runtime is on PATH, offline mode is enforced, and llama-server is healthy
 cat << 'PI_WRAPPER_EOF' > "$PATCH_ROOT/usr/local/bin/pi"
 #!/usr/bin/env bash
 export PATH="/opt/node/bin:$PATH"
-if [ -x /opt/node/bin/pi ]; then
-  exec /opt/node/bin/pi "$@"
-else
-  exec npx --no-install @earendil-works/pi-coding-agent "$@"
+export PI_OFFLINE=1
+export PI_TELEMETRY=0
+
+CYAN="\033[1;36m"
+GREEN="\033[1;32m"
+YELLOW="\033[1;33m"
+RESET="\033[0m"
+
+# Print instant startup banner so the terminal is never blank
+echo -e "${CYAN}=======================================================${RESET}"
+echo -e "${GREEN}      Revenant OS - Local Agentic Environment          ${RESET}"
+echo -e "${CYAN}=======================================================${RESET}"
+
+# Verify local llama-server health on 127.0.0.1:8080
+if ! curl -s -f -m 1 "http://127.0.0.1:8080/health" >/dev/null 2>&1 && ! curl -s -f -m 1 "http://127.0.0.1:8080/v1/models" >/dev/null 2>&1; then
+  echo -e "${YELLOW}[*] Starting local neural inference engine (llama-server)...${RESET}"
+  systemctl start llama-server.service 2>/dev/null || sudo systemctl start llama-server.service 2>/dev/null || true
+
+  for i in $(seq 1 8); do
+    if curl -s -f -m 1 "http://127.0.0.1:8080/health" >/dev/null 2>&1 || curl -s -f -m 1 "http://127.0.0.1:8080/v1/models" >/dev/null 2>&1; then
+      echo -e "${GREEN}[✓] Neural inference engine online.${RESET}"
+      break
+    fi
+    echo -n "."
+    sleep 1
+  done
+  echo ""
 fi
+
+PI_BIN=""
+if [ -x /opt/node/bin/pi ]; then
+  PI_BIN="/opt/node/bin/pi"
+elif command -v pi >/dev/null 2>&1 && [ "$(which pi)" != "/usr/local/bin/pi" ]; then
+  PI_BIN="$(which pi)"
+fi
+
+if [ -z "$PI_BIN" ]; then
+  echo -e "${YELLOW}[!] Pi Agent binary not found in /opt/node/bin/pi.${RESET}"
+  PI_BIN="/opt/node/bin/pi"
+fi
+
+exec "$PI_BIN" --offline --provider revenant-local --model qwen2.5-coder-1.5b-instruct "$@"
 PI_WRAPPER_EOF
 chmod +x "$PATCH_ROOT/usr/local/bin/pi"
 
 # Create specialized persona wrappers
 cat << 'WRAPPER_MECH_EOF' > "$PATCH_ROOT/usr/local/bin/pi-mechanic"
 #!/usr/bin/env bash
-export PATH="/opt/node/bin:$PATH"
-if [ -n "$*" ]; then
-  exec /usr/local/bin/pi "/mechanic $*"
+PROMPT_FILE="/usr/share/revenant/prompts/mechanic.md"
+[ -f "$HOME/.pi/agent/prompts/mechanic.md" ] && PROMPT_FILE="$HOME/.pi/agent/prompts/mechanic.md"
+
+PROMPT_TEXT=""
+if [ -f "$PROMPT_FILE" ]; then
+  PROMPT_TEXT=$(grep -v '^---' "$PROMPT_FILE" | grep -v '^description:' | grep -v '^argument-hint:' | sed '/./,$!d')
+fi
+
+echo -e "\033[1;36m=======================================================\033[0m"
+echo -e "\033[1;33m       Pi Motor Mechanic - Field Diagnostic Agent      \033[0m"
+echo -e "\033[1;36m=======================================================\033[0m"
+echo -e "Specialization: Automotive DTC (OBD-II), CAN Bus & Engine Repair"
+echo ""
+
+if [ $# -gt 0 ]; then
+  exec /usr/local/bin/pi --append-system-prompt "$PROMPT_TEXT" "$@"
 else
-  exec /usr/local/bin/pi "/mechanic"
+  exec /usr/local/bin/pi --append-system-prompt "$PROMPT_TEXT"
 fi
 WRAPPER_MECH_EOF
 chmod +x "$PATCH_ROOT/usr/local/bin/pi-mechanic"
 
 cat << 'WRAPPER_ELEC_EOF' > "$PATCH_ROOT/usr/local/bin/pi-electronics"
 #!/usr/bin/env bash
-export PATH="/opt/node/bin:$PATH"
-if [ -n "$*" ]; then
-  exec /usr/local/bin/pi "/electronics $*"
+PROMPT_FILE="/usr/share/revenant/prompts/electronics.md"
+[ -f "$HOME/.pi/agent/prompts/electronics.md" ] && PROMPT_FILE="$HOME/.pi/agent/prompts/electronics.md"
+
+PROMPT_TEXT=""
+if [ -f "$PROMPT_FILE" ]; then
+  PROMPT_TEXT=$(grep -v '^---' "$PROMPT_FILE" | grep -v '^description:' | grep -v '^argument-hint:' | sed '/./,$!d')
+fi
+
+echo -e "\033[1;36m=======================================================\033[0m"
+echo -e "\033[1;35m    Pi Electronics Specialist - Component Diagnostics  \033[0m"
+echo -e "\033[1;36m=======================================================\033[0m"
+echo -e "Specialization: Circuit Boards, Multimeter Test Points & Microcontrollers"
+echo ""
+
+if [ $# -gt 0 ]; then
+  exec /usr/local/bin/pi --append-system-prompt "$PROMPT_TEXT" "$@"
 else
-  exec /usr/local/bin/pi "/electronics"
+  exec /usr/local/bin/pi --append-system-prompt "$PROMPT_TEXT"
 fi
 WRAPPER_ELEC_EOF
 chmod +x "$PATCH_ROOT/usr/local/bin/pi-electronics"
 
 cat << 'WRAPPER_SYS_EOF' > "$PATCH_ROOT/usr/local/bin/pi-sysadmin"
 #!/usr/bin/env bash
-export PATH="/opt/node/bin:$PATH"
-if [ -n "$*" ]; then
-  exec /usr/local/bin/pi "/sysadmin $*"
+PROMPT_FILE="/usr/share/revenant/prompts/sysadmin.md"
+[ -f "$HOME/.pi/agent/prompts/sysadmin.md" ] && PROMPT_FILE="$HOME/.pi/agent/prompts/sysadmin.md"
+
+PROMPT_TEXT=""
+if [ -f "$PROMPT_FILE" ]; then
+  PROMPT_TEXT=$(grep -v '^---' "$PROMPT_FILE" | grep -v '^description:' | grep -v '^argument-hint:' | sed '/./,$!d')
+fi
+
+echo -e "\033[1;36m=======================================================\033[0m"
+echo -e "\033[1;32m      Pi System Admin - Field Linux Systems Recovery   \033[0m"
+echo -e "\033[1;36m=======================================================\033[0m"
+echo -e "Specialization: Network Troubleshooting, Serial Interfaces & System Recovery"
+echo ""
+
+if [ $# -gt 0 ]; then
+  exec /usr/local/bin/pi --append-system-prompt "$PROMPT_TEXT" "$@"
 else
-  exec /usr/local/bin/pi "/sysadmin"
+  exec /usr/local/bin/pi --append-system-prompt "$PROMPT_TEXT"
 fi
 WRAPPER_SYS_EOF
 chmod +x "$PATCH_ROOT/usr/local/bin/pi-sysadmin"
@@ -1517,7 +1596,7 @@ zenity --question --title="Confirm Installation" \
   --ok-label="Yes, Erase & Install" --cancel-label="Cancel" || exit 0
 
 LOG="/tmp/revenant_install.log"
-echo "=== Revenant OS 1.1 (Build 19.3) Installation Started ===" > "$LOG"
+echo "=== Revenant OS 1.1 (Build 19.4) Installation Started ===" > "$LOG"
 date >> "$LOG"
 
 (
@@ -1881,7 +1960,7 @@ insmod ext2
 set root='hd0,msdos1'
 search --no-floppy --fs-uuid --set=root $UUID
 
-menuentry "Revenant OS 1.1 (Build 19.3) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 19.4) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -1890,7 +1969,7 @@ menuentry "Revenant OS 1.1 (Build 19.3) - Agentic Linux" --class debian --class 
     initrd /boot/$INITRD
 }
 
-menuentry "Revenant OS 1.1 (Build 19.3) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 19.4) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -1914,11 +1993,11 @@ umount -l /mnt/target/dev 2>/dev/null || true
 umount -l /mnt/target 2>/dev/null || true
 
 echo "100"; echo "# Installation Complete!"
-) | zenity --progress --title="Installing Revenant OS 1.1 (Build 19.3)" --text="Starting installation..." --percentage=0 --auto-close
+) | zenity --progress --title="Installing Revenant OS 1.1 (Build 19.4)" --text="Starting installation..." --percentage=0 --auto-close
 
 if [ -f "$LOG" ] && grep -iq "Installing for i386-pc platform" "$LOG"; then
   zenity --info --title="Success" \
-    --text="<b>Revenant OS 1.1 (Build 19.3) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
+    --text="<b>Revenant OS 1.1 (Build 19.4) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
 else
   zenity --error --title="Error" \
     --text="An error occurred during installation. Check /tmp/revenant_install.log or the target drive."
@@ -1946,12 +2025,12 @@ if background_image /boot/grub/splash.png; then
   set color_highlight=cyan/black
 fi
 
-menuentry "Revenant OS 1.1 (Build 19.3) - Agentic Core (Offline Voice + Local LLM + Pi Agent)" {
+menuentry "Revenant OS 1.1 (Build 19.4) - Agentic Core (Offline Voice + Local LLM + Pi Agent)" {
     linux /live/vmlinuz boot=live components quiet splash
     initrd /live/initrd.img
 }
 
-menuentry "Revenant OS 1.1 (Build 19.3) (Safe Graphics / Failsafe)" {
+menuentry "Revenant OS 1.1 (Build 19.4) (Safe Graphics / Failsafe)" {
     linux /live/vmlinuz boot=live components nomodeset
     initrd /live/initrd.img
 }
@@ -1960,13 +2039,13 @@ EOF
 echo "[*] Packaging patched SquashFS (xz compression)..."
 mksquashfs "$PATCH_ROOT" "$WORKSPACE_DIR/image/live/filesystem.squashfs" -comp xz
 
-echo "[*] Building 1.1 Build 19.3 ISO with hybrid bootloader..."
-grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 19.3)"
+echo "[*] Building 1.1 Build 19.4 ISO with hybrid bootloader..."
+grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 19.4)"
 cp -f "$ISO_TARGET" "$ISO_ALIAS"
 
 echo "[*] Cleaning up workspace..."
 rm -rf "$WORKSPACE_DIR" "$PATCH_ROOT"
 
-echo "[*] Build Complete! Revenant OS 1.1 (Build 19.3) ISO ready at: $ISO_TARGET"
+echo "[*] Build Complete! Revenant OS 1.1 (Build 19.4) ISO ready at: $ISO_TARGET"
 ls -lh "$ISO_TARGET" "$ISO_ALIAS"
 
