@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="/var/tmp/toughbook_rebuild_1_1"
 PATCH_ROOT="/var/tmp/patch_root_1_1"
 ISO_SOURCE="$SCRIPT_DIR/revenant_os_toughbook_v15_5.iso"
-ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build19.2.iso"
+ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build19.3.iso"
 ISO_ALIAS="$SCRIPT_DIR/revenant_os_latest.iso"
 CACHE_DIR="/var/tmp/revenant_cache"
 
@@ -699,96 +699,209 @@ offline: true
 INTERP_CFG
 done
 
-echo "[*] Installing OpenCode standalone terminal agent..."
-OPENCODE_TAR="$CACHE_DIR/opencode-linux-x64.tar.gz"
-if [ ! -f "$OPENCODE_TAR" ] && [ -f "$SCRIPT_DIR/opencode-linux-x64.tar.gz" ]; then
-  OPENCODE_TAR="$SCRIPT_DIR/opencode-linux-x64.tar.gz"
-elif [ ! -f "$OPENCODE_TAR" ]; then
+echo "[*] Installing Node.js v22 runtime and Pi Coding Agent..."
+NODE_TAR="$CACHE_DIR/node-v22.14.0-linux-x64.tar.xz"
+if [ ! -f "$NODE_TAR" ] && [ -f "$SCRIPT_DIR/node-v22.14.0-linux-x64.tar.xz" ]; then
+  NODE_TAR="$SCRIPT_DIR/node-v22.14.0-linux-x64.tar.xz"
+elif [ ! -f "$NODE_TAR" ]; then
   mkdir -p "$CACHE_DIR"
-  echo "[*] Downloading OpenCode standalone Linux binary release..."
-  wget -q --show-progress -c "https://github.com/anomalyco/opencode/releases/download/v1.18.30/opencode-linux-x64.tar.gz" -O "$CACHE_DIR/opencode-linux-x64.tar.gz" || true
+  echo "[*] Downloading Node.js v22 standalone runtime..."
+  wget -q --show-progress -c "https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-x64.tar.xz" -O "$CACHE_DIR/node-v22.14.0-linux-x64.tar.xz" || true
 fi
 
-if [ -f "$OPENCODE_TAR" ]; then
-  tar -xzf "$OPENCODE_TAR" -C "$PATCH_ROOT/usr/local/bin/"
-  chmod +x "$PATCH_ROOT/usr/local/bin/opencode" 2>/dev/null || true
+if [ -f "$NODE_TAR" ]; then
+  mkdir -p "$PATCH_ROOT/opt/node"
+  tar -xJf "$NODE_TAR" --strip-components=1 -C "$PATCH_ROOT/opt/node" 2>/dev/null || true
+  ln -sf /opt/node/bin/node "$PATCH_ROOT/usr/local/bin/node"
+  ln -sf /opt/node/bin/npm "$PATCH_ROOT/usr/local/bin/npm"
+  ln -sf /opt/node/bin/npx "$PATCH_ROOT/usr/local/bin/npx"
 fi
 
-# Pre-seed OpenCode configuration pointing to local llama-server (:8080)
-for opencode_dir in "$PATCH_ROOT/etc/skel/.config/opencode" "$PATCH_ROOT/home/user/.config/opencode" "$PATCH_ROOT/home/revenant/.config/opencode"; do
-  mkdir -p "$opencode_dir"
-  cat << 'OPENCODE_JSON_EOF' > "$opencode_dir/opencode.json"
+# Install Pi Coding Agent globally into Node runtime
+if [ -x "$PATCH_ROOT/opt/node/bin/npm" ]; then
+  echo "[*] Installing @earendil-works/pi-coding-agent into system runtime..."
+  chroot "$PATCH_ROOT" /opt/node/bin/npm install -g --ignore-scripts @earendil-works/pi-coding-agent 2>/dev/null || true
+  if [ -f "$PATCH_ROOT/opt/node/bin/pi" ]; then
+    ln -sf /opt/node/bin/pi "$PATCH_ROOT/usr/local/bin/pi"
+  fi
+fi
+
+# Purge any legacy OpenCode binaries, wrappers, and configurations
+rm -f "$PATCH_ROOT/usr/local/bin/opencode" "$PATCH_ROOT/usr/local/bin/revenant-opencode" "$PATCH_ROOT/usr/share/applications/opencode.desktop"
+rm -rf "$PATCH_ROOT/etc/skel/.config/opencode" "$PATCH_ROOT/home/user/.config/opencode" "$PATCH_ROOT/home/revenant/.config/opencode"
+rm -rf "$PATCH_ROOT/etc/skel/.local/state/opencode" "$PATCH_ROOT/home/user/.local/state/opencode" "$PATCH_ROOT/home/revenant/.local/state/opencode"
+
+# Pre-seed Pi Agent configuration and specialized field prompts for all user profiles
+for pi_base in "$PATCH_ROOT/etc/skel/.pi/agent" "$PATCH_ROOT/home/user/.pi/agent" "$PATCH_ROOT/home/revenant/.pi/agent"; do
+  mkdir -p "$pi_base/prompts"
+
+  # 1. Local llama-server provider configuration (models.json)
+  cat << 'PI_MODELS_EOF' > "$pi_base/models.json"
 {
-  "$schema": "https://opencode.ai/config.json",
-  "model": "revenant-local/qwen2.5-coder-1.5b-instruct",
-  "autoupdate": false,
-  "provider": {
+  "providers": {
     "revenant-local": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "Revenant Local LLM (Offline)",
-      "options": {
-        "baseURL": "http://127.0.0.1:8080/v1",
-        "apiKey": "sk-local-revenant"
+      "baseUrl": "http://127.0.0.1:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "sk-local-revenant",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
       },
-      "models": {
-        "qwen2.5-coder-1.5b-instruct": {
-          "name": "Qwen2.5 Coder 1.5B (Local Toughbook)"
+      "models": [
+        {
+          "id": "qwen2.5-coder-1.5b-instruct",
+          "name": "Qwen 2.5 Coder 1.5B (Local Toughbook)",
+          "contextWindow": 4096,
+          "maxTokens": 512
         }
-      }
-    }
-  },
-  "agent": {
-    "build": {
-      "prompt": "You are OpenCode, an AI coding assistant on Revenant OS for Panasonic Toughbook. You help the user write code, inspect files, and execute terminal commands. Answer questions concisely, directly, and practically. Never repeat phrases or get stuck in loops.",
-      "temperature": 0.5
+      ]
     }
   }
 }
-OPENCODE_JSON_EOF
-  cp "$opencode_dir/opencode.json" "$opencode_dir/config.json"
-done
+PI_MODELS_EOF
 
-# Pre-seed ~/.local/state/opencode/model.json so OpenCode TUI never defaults to OpenAI / GPT-5
-for state_dir in "$PATCH_ROOT/etc/skel/.local/state/opencode" "$PATCH_ROOT/home/user/.local/state/opencode" "$PATCH_ROOT/home/revenant/.local/state/opencode"; do
-  mkdir -p "$state_dir"
-  cat << 'STATE_JSON_EOF' > "$state_dir/model.json"
+  # 2. Default model & provider settings (settings.json)
+  cat << 'PI_SETTINGS_EOF' > "$pi_base/settings.json"
 {
-  "recent": [
-    {
-      "providerID": "revenant-local",
-      "modelID": "qwen2.5-coder-1.5b-instruct"
-    }
-  ],
-  "favorite": [
-    {
-      "providerID": "revenant-local",
-      "modelID": "qwen2.5-coder-1.5b-instruct"
-    }
-  ]
+  "defaultProvider": "revenant-local",
+  "defaultModel": "qwen2.5-coder-1.5b-instruct"
 }
-STATE_JSON_EOF
+PI_SETTINGS_EOF
+
+  # 3. Pi Motor Mechanic Prompt Template (/mechanic)
+  cat << 'PROMPT_MECHANIC_EOF' > "$pi_base/prompts/mechanic.md"
+---
+description: Automotive & Motor Mechanic Field Diagnostics
+argument-hint: "[vehicle-or-DTC-code]"
+---
+You are the Revenant OS Motor Mechanic Field Diagnostic Agent on a Panasonic Toughbook.
+You specialize in automotive diagnostics, OBD-II DTC troubleshooting (P0xxx, P1xxx, Uxxxx, Bxxxx, Cxxxx), CAN bus analysis, diesel/petrol engine mechanical repair, electrical wiring traces, sensor testing (MAF, MAP, O2, TPS, CKP, CMP), starter/alternator/battery load tests, and component replacement sequences.
+Provide step-by-step, highly practical diagnostic procedures.
+Focus on: $ARGUMENTS
+PROMPT_MECHANIC_EOF
+
+  # 4. Pi Electronics Specialist Prompt Template (/electronics)
+  cat << 'PROMPT_ELECTRONICS_EOF' > "$pi_base/prompts/electronics.md"
+---
+description: Electronics Repair & Circuit Analysis
+argument-hint: "[circuit-or-component-fault]"
+---
+You are the Revenant OS Electronics Diagnostic Specialist on a Panasonic Toughbook.
+You specialize in circuit troubleshooting, board-level repair, semiconductor testing (MOSFETs, diodes, transistors, voltage regulators), multimeter/oscilloscope test points, schematic analysis, soldering/rework guidance, and microcontroller firmware (Arduino, ESP32, STM32, PIC).
+Provide clear, safe, component-level diagnostic steps and pinout details.
+Focus on: $ARGUMENTS
+PROMPT_ELECTRONICS_EOF
+
+  # 5. Pi System Administrator Prompt Template (/sysadmin)
+  cat << 'PROMPT_SYSADMIN_EOF' > "$pi_base/prompts/sysadmin.md"
+---
+description: Linux Field Engineering & Systems Administration
+argument-hint: "[service-or-system-issue]"
+---
+You are the Revenant OS Field Linux Systems Administrator on a Panasonic Toughbook.
+You specialize in Linux system recovery, network diagnostics (ip, ss, tcpdump, ping, ethtool), kernel module troubleshooting, serial interface configuration (/dev/ttyUSB*, /dev/ttyS*), disk and partition repair (fsck, parted, smartctl, dd), systemd service management, and rugged field automation.
+Provide exact, reliable terminal commands and concise technical explanations.
+Focus on: $ARGUMENTS
+PROMPT_SYSADMIN_EOF
 done
 
-# Wrapper script ensuring local model flag is always passed
-cat << 'WRAPPER_EOF' > "$PATCH_ROOT/usr/local/bin/revenant-opencode"
+# Wrapper script for pi ensuring Node runtime is on PATH
+cat << 'PI_WRAPPER_EOF' > "$PATCH_ROOT/usr/local/bin/pi"
 #!/usr/bin/env bash
-exec /usr/local/bin/opencode --model revenant-local/qwen2.5-coder-1.5b-instruct "$@"
-WRAPPER_EOF
-chmod +x "$PATCH_ROOT/usr/local/bin/revenant-opencode"
+export PATH="/opt/node/bin:$PATH"
+if [ -x /opt/node/bin/pi ]; then
+  exec /opt/node/bin/pi "$@"
+else
+  exec npx --no-install @earendil-works/pi-coding-agent "$@"
+fi
+PI_WRAPPER_EOF
+chmod +x "$PATCH_ROOT/usr/local/bin/pi"
 
-# Create OpenCode Desktop Launcher
+# Create specialized persona wrappers
+cat << 'WRAPPER_MECH_EOF' > "$PATCH_ROOT/usr/local/bin/pi-mechanic"
+#!/usr/bin/env bash
+export PATH="/opt/node/bin:$PATH"
+if [ -n "$*" ]; then
+  exec /usr/local/bin/pi "/mechanic $*"
+else
+  exec /usr/local/bin/pi "/mechanic"
+fi
+WRAPPER_MECH_EOF
+chmod +x "$PATCH_ROOT/usr/local/bin/pi-mechanic"
+
+cat << 'WRAPPER_ELEC_EOF' > "$PATCH_ROOT/usr/local/bin/pi-electronics"
+#!/usr/bin/env bash
+export PATH="/opt/node/bin:$PATH"
+if [ -n "$*" ]; then
+  exec /usr/local/bin/pi "/electronics $*"
+else
+  exec /usr/local/bin/pi "/electronics"
+fi
+WRAPPER_ELEC_EOF
+chmod +x "$PATCH_ROOT/usr/local/bin/pi-electronics"
+
+cat << 'WRAPPER_SYS_EOF' > "$PATCH_ROOT/usr/local/bin/pi-sysadmin"
+#!/usr/bin/env bash
+export PATH="/opt/node/bin:$PATH"
+if [ -n "$*" ]; then
+  exec /usr/local/bin/pi "/sysadmin $*"
+else
+  exec /usr/local/bin/pi "/sysadmin"
+fi
+WRAPPER_SYS_EOF
+chmod +x "$PATCH_ROOT/usr/local/bin/pi-sysadmin"
+
+ln -sf /usr/local/bin/pi "$PATCH_ROOT/usr/local/bin/pi-agent" 2>/dev/null || true
+
+# Create Desktop Launchers
 mkdir -p "$PATCH_ROOT/usr/share/applications"
-cat << 'OPENCODE_DESKTOP_EOF' > "$PATCH_ROOT/usr/share/applications/opencode.desktop"
+cat << 'PI_DESK_EOF' > "$PATCH_ROOT/usr/share/applications/pi.desktop"
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=OpenCode AI Agent
-Comment=Autonomous AI Coding Agent (Terminal UI)
-Exec=xfce4-terminal --title="OpenCode AI Agent" --geometry=110x34 -e "revenant-opencode"
+Name=Pi Field Agent
+Comment=Autonomous AI Coding & Field Agent
+Exec=xfce4-terminal --title="Pi Field Agent" --geometry=110x34 -e "/usr/local/bin/pi"
 Icon=utilities-terminal
 Terminal=false
-Categories=Development;IDE;
-OPENCODE_DESKTOP_EOF
+Categories=Development;System;
+PI_DESK_EOF
+
+cat << 'MECH_DESK_EOF' > "$PATCH_ROOT/usr/share/applications/pi-mechanic.desktop"
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Pi Motor Mechanic
+Comment=Automotive & OBD-II Field Diagnostic Specialist
+Exec=xfce4-terminal --title="Pi Motor Mechanic" --geometry=110x34 -e "/usr/local/bin/pi-mechanic"
+Icon=preferences-system
+Terminal=false
+Categories=Development;System;Utility;
+MECH_DESK_EOF
+
+cat << 'ELEC_DESK_EOF' > "$PATCH_ROOT/usr/share/applications/pi-electronics.desktop"
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Pi Electronics Specialist
+Comment=Circuit Board & Component Diagnostic Specialist
+Exec=xfce4-terminal --title="Pi Electronics Specialist" --geometry=110x34 -e "/usr/local/bin/pi-electronics"
+Icon=applications-engineering
+Terminal=false
+Categories=Development;System;Utility;
+ELEC_DESK_EOF
+
+cat << 'SYS_DESK_EOF' > "$PATCH_ROOT/usr/share/applications/pi-sysadmin.desktop"
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Pi System Admin
+Comment=Linux Field Recovery & Systems Administration
+Exec=xfce4-terminal --title="Pi System Admin" --geometry=110x34 -e "/usr/local/bin/pi-sysadmin"
+Icon=system-run
+Terminal=false
+Categories=Development;System;Utility;
+SYS_DESK_EOF
 
 # Install Agent Reach and Curated Field Skills
 echo "[*] Installing Agent Reach and offline field engineering skills..."
@@ -1291,7 +1404,9 @@ SHORTCUTS_EOF
 # Revenant OS Hotkeys & Quick Reference
 bindsym $mod+m exec --no-startup-id /usr/local/bin/revenant-voice
 bindsym Mod1+Control+m exec --no-startup-id /usr/local/bin/revenant-voice
-bindsym $mod+Shift+c exec --no-startup-id xfce4-terminal --title="OpenCode AI Agent" --geometry=110x34 -e "revenant-opencode"
+bindsym $mod+Shift+c exec --no-startup-id xfce4-terminal --title="Pi Field Agent" --geometry=110x34 -e "pi"
+bindsym $mod+Shift+m exec --no-startup-id xfce4-terminal --title="Pi Motor Mechanic" --geometry=110x34 -e "pi-mechanic"
+bindsym $mod+Shift+e exec --no-startup-id xfce4-terminal --title="Pi Electronics Specialist" --geometry=110x34 -e "pi-electronics"
 bindsym $mod+F1 exec --no-startup-id /usr/local/bin/revenant-i3-help
 I3_HOTKEY
 done
@@ -1402,7 +1517,7 @@ zenity --question --title="Confirm Installation" \
   --ok-label="Yes, Erase & Install" --cancel-label="Cancel" || exit 0
 
 LOG="/tmp/revenant_install.log"
-echo "=== Revenant OS 1.1 (Build 19.2) Installation Started ===" > "$LOG"
+echo "=== Revenant OS 1.1 (Build 19.3) Installation Started ===" > "$LOG"
 date >> "$LOG"
 
 (
@@ -1490,15 +1605,11 @@ if [ -d "/mnt/target/etc/skel/.config/open-interpreter" ]; then
   mkdir -p "/mnt/target/home/$NEW_USER/.config/open-interpreter"
   cp -a /mnt/target/etc/skel/.config/open-interpreter/* "/mnt/target/home/$NEW_USER/.config/open-interpreter/"
 fi
-if [ -d "/mnt/target/etc/skel/.config/opencode" ]; then
-  mkdir -p "/mnt/target/home/$NEW_USER/.config/opencode"
-  cp -a /mnt/target/etc/skel/.config/opencode/* "/mnt/target/home/$NEW_USER/.config/opencode/"
+if [ -d "/mnt/target/etc/skel/.pi" ]; then
+  mkdir -p "/mnt/target/home/$NEW_USER/.pi"
+  cp -a /mnt/target/etc/skel/.pi/* "/mnt/target/home/$NEW_USER/.pi/"
 fi
-if [ -d "/mnt/target/etc/skel/.local/state/opencode" ]; then
-  mkdir -p "/mnt/target/home/$NEW_USER/.local/state/opencode"
-  cp -a /mnt/target/etc/skel/.local/state/opencode/* "/mnt/target/home/$NEW_USER/.local/state/opencode/"
-fi
-chroot /mnt/target chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.config" "/home/$NEW_USER/.local" 2>/dev/null || true
+chroot /mnt/target chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.config" "/home/$NEW_USER/.local" "/home/$NEW_USER/.pi" 2>/dev/null || true
 
 # Ensure Desktop and AI shortcuts exist in installed user home
 mkdir -p "/mnt/target/home/$NEW_USER/Desktop"
@@ -1510,11 +1621,17 @@ if [ -f "/mnt/target/etc/skel/Desktop/Revenant_Agent.desktop" ]; then
   cp -a "/mnt/target/etc/skel/Desktop/Revenant_Agent.desktop" "/mnt/target/home/$NEW_USER/Desktop/"
   chmod +x "/mnt/target/home/$NEW_USER/Desktop/Revenant_Agent.desktop"
 fi
-# Clean up any legacy session switch shortcuts from installed desktops (LightDM greeter handles session selection)
-rm -f "/mnt/target/home/$NEW_USER/Desktop/Switch_to_"*.desktop "/mnt/target/home/$NEW_USER/Desktop/switch-to-"*.desktop 2>/dev/null || true
-rm -f "/mnt/target/etc/skel/Desktop/Switch_to_"*.desktop "/mnt/target/etc/skel/Desktop/switch-to-"*.desktop 2>/dev/null || true
+for pdesk in pi.desktop pi-mechanic.desktop pi-electronics.desktop pi-sysadmin.desktop; do
+  if [ -f "/mnt/target/usr/share/applications/$pdesk" ]; then
+    cp -a "/mnt/target/usr/share/applications/$pdesk" "/mnt/target/home/$NEW_USER/Desktop/"
+    chmod +x "/mnt/target/home/$NEW_USER/Desktop/$pdesk"
+  fi
+done
+# Clean up any legacy session switch or opencode shortcuts from installed desktops
+rm -f "/mnt/target/home/$NEW_USER/Desktop/Switch_to_"*.desktop "/mnt/target/home/$NEW_USER/Desktop/switch-to-"*.desktop "/mnt/target/home/$NEW_USER/Desktop/"*opencode*.desktop "/mnt/target/home/$NEW_USER/Desktop/"*OpenCode*.desktop 2>/dev/null || true
+rm -f "/mnt/target/etc/skel/Desktop/Switch_to_"*.desktop "/mnt/target/etc/skel/Desktop/switch-to-"*.desktop "/mnt/target/etc/skel/Desktop/"*opencode*.desktop "/mnt/target/etc/skel/Desktop/"*OpenCode*.desktop 2>/dev/null || true
 for ddir in /mnt/target/root/Desktop /mnt/target/home/*/Desktop; do
-  rm -f "$ddir/Switch_to_"*.desktop "$ddir/switch-to-"*.desktop 2>/dev/null || true
+  rm -f "$ddir/Switch_to_"*.desktop "$ddir/switch-to-"*.desktop "$ddir/"*opencode*.desktop "$ddir/"*OpenCode*.desktop 2>/dev/null || true
 done
 chroot /mnt/target chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/Desktop" 2>/dev/null || true
 
@@ -1530,7 +1647,9 @@ for i3_cfg in /mnt/target/etc/i3/config /mnt/target/etc/skel/.config/i3/config /
 # Revenant OS Hotkeys & Quick Reference
 bindsym $mod+m exec --no-startup-id /usr/local/bin/revenant-voice
 bindsym Mod1+Control+m exec --no-startup-id /usr/local/bin/revenant-voice
-bindsym $mod+Shift+c exec --no-startup-id xfce4-terminal --title="OpenCode AI Agent" --geometry=110x34 -e "revenant-opencode"
+bindsym $mod+Shift+c exec --no-startup-id xfce4-terminal --title="Pi Field Agent" --geometry=110x34 -e "pi"
+bindsym $mod+Shift+m exec --no-startup-id xfce4-terminal --title="Pi Motor Mechanic" --geometry=110x34 -e "pi-mechanic"
+bindsym $mod+Shift+e exec --no-startup-id xfce4-terminal --title="Pi Electronics Specialist" --geometry=110x34 -e "pi-electronics"
 bindsym $mod+F1 exec --no-startup-id /usr/local/bin/revenant-i3-help
 I3_HOTKEY
   fi
@@ -1762,7 +1881,7 @@ insmod ext2
 set root='hd0,msdos1'
 search --no-floppy --fs-uuid --set=root $UUID
 
-menuentry "Revenant OS 1.1 (Build 19.2) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 19.3) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -1771,7 +1890,7 @@ menuentry "Revenant OS 1.1 (Build 19.2) - Agentic Linux" --class debian --class 
     initrd /boot/$INITRD
 }
 
-menuentry "Revenant OS 1.1 (Build 19.2) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 19.3) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -1795,11 +1914,11 @@ umount -l /mnt/target/dev 2>/dev/null || true
 umount -l /mnt/target 2>/dev/null || true
 
 echo "100"; echo "# Installation Complete!"
-) | zenity --progress --title="Installing Revenant OS 1.1 (Build 19.2)" --text="Starting installation..." --percentage=0 --auto-close
+) | zenity --progress --title="Installing Revenant OS 1.1 (Build 19.3)" --text="Starting installation..." --percentage=0 --auto-close
 
 if [ -f "$LOG" ] && grep -iq "Installing for i386-pc platform" "$LOG"; then
   zenity --info --title="Success" \
-    --text="<b>Revenant OS 1.1 (Build 19.2) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
+    --text="<b>Revenant OS 1.1 (Build 19.3) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
 else
   zenity --error --title="Error" \
     --text="An error occurred during installation. Check /tmp/revenant_install.log or the target drive."
@@ -1827,12 +1946,12 @@ if background_image /boot/grub/splash.png; then
   set color_highlight=cyan/black
 fi
 
-menuentry "Revenant OS 1.1 (Build 19.2) - Agentic Core (Offline Voice + Local LLM + OpenCode)" {
+menuentry "Revenant OS 1.1 (Build 19.3) - Agentic Core (Offline Voice + Local LLM + Pi Agent)" {
     linux /live/vmlinuz boot=live components quiet splash
     initrd /live/initrd.img
 }
 
-menuentry "Revenant OS 1.1 (Build 19.2) (Safe Graphics / Failsafe)" {
+menuentry "Revenant OS 1.1 (Build 19.3) (Safe Graphics / Failsafe)" {
     linux /live/vmlinuz boot=live components nomodeset
     initrd /live/initrd.img
 }
@@ -1841,13 +1960,13 @@ EOF
 echo "[*] Packaging patched SquashFS (xz compression)..."
 mksquashfs "$PATCH_ROOT" "$WORKSPACE_DIR/image/live/filesystem.squashfs" -comp xz
 
-echo "[*] Building 1.1 Build 19.2 ISO with hybrid bootloader..."
-grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 19.2)"
+echo "[*] Building 1.1 Build 19.3 ISO with hybrid bootloader..."
+grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 19.3)"
 cp -f "$ISO_TARGET" "$ISO_ALIAS"
 
 echo "[*] Cleaning up workspace..."
 rm -rf "$WORKSPACE_DIR" "$PATCH_ROOT"
 
-echo "[*] Build Complete! Revenant OS 1.1 (Build 19.2) ISO ready at: $ISO_TARGET"
+echo "[*] Build Complete! Revenant OS 1.1 (Build 19.3) ISO ready at: $ISO_TARGET"
 ls -lh "$ISO_TARGET" "$ISO_ALIAS"
 

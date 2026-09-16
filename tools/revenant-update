@@ -930,105 +930,234 @@ AGENT_EOF
 chmod +x /usr/local/bin/revenant-agent
 echo -e "${GREEN}[✓] Revenant Custom Agent installed to /usr/local/bin/revenant-agent.${RESET}"
 
-# TIER 2.8: OpenCode Autonomous Agent & Offline Developer Tooling
+# TIER 2.8: Pi Field & Coding Agent (@earendil-works/pi-coding-agent)
 echo ""
-echo -e "${CYAN}${BOLD}[*] Synchronizing OpenCode Autonomous Coding Agent...${RESET}"
-if [ ! -f /usr/local/bin/opencode ] || [ "$FORCE" = true ]; then
-  echo -e "${CYAN}  -> Downloading OpenCode Linux standalone release (v1.18.30)...${RESET}"
-  mkdir -p /tmp/opencode_dl
-  if curl -fsSL -L --connect-timeout 15 "https://github.com/anomalyco/opencode/releases/download/v1.18.30/opencode-linux-x64.tar.gz" -o /tmp/opencode_dl/opencode.tar.gz; then
-    tar -xzf /tmp/opencode_dl/opencode.tar.gz -C /usr/local/bin/
-    chmod +x /usr/local/bin/opencode 2>/dev/null || true
-    echo -e "${GREEN}[✓] OpenCode binary installed to /usr/local/bin/opencode.${RESET}"
-  fi
-  rm -rf /tmp/opencode_dl
-fi
+echo -e "${CYAN}${BOLD}[*] Synchronizing Pi Coding & Field Agent...${RESET}"
 
-# Pre-seed OpenCode configuration and model state across skel, root, and user homes
+# Purge legacy OpenCode binaries, wrappers, and desktop shortcuts
+rm -f /usr/local/bin/opencode /usr/local/bin/revenant-opencode /usr/share/applications/opencode.desktop
 for base_user_dir in /etc/skel /root /home/*; do
   if [ -d "$base_user_dir" ]; then
-    opencode_cfg="$base_user_dir/.config/opencode"
-    opencode_state="$base_user_dir/.local/state/opencode"
-    mkdir -p "$opencode_cfg" "$opencode_state"
-
-    cat << 'OPENCODE_JSON_EOF' > "$opencode_cfg/opencode.json"
-{
-  "$schema": "https://opencode.ai/config.json",
-  "model": "revenant-local/qwen2.5-coder-1.5b-instruct",
-  "autoupdate": false,
-  "provider": {
-    "revenant-local": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "Revenant Local LLM (Offline)",
-      "options": {
-        "baseURL": "http://127.0.0.1:8080/v1",
-        "apiKey": "sk-local-revenant"
-      },
-      "models": {
-        "qwen2.5-coder-1.5b-instruct": {
-          "name": "Qwen2.5 Coder 1.5B (Local Toughbook)"
-        }
-      }
-    }
-  },
-  "agent": {
-    "build": {
-      "prompt": "You are OpenCode, an AI coding assistant on Revenant OS for Panasonic Toughbook. You help the user write code, inspect files, and execute terminal commands. Answer questions concisely, directly, and practically. Never repeat phrases or get stuck in loops.",
-      "temperature": 0.5
-    }
-  }
-}
-OPENCODE_JSON_EOF
-    cp "$opencode_cfg/opencode.json" "$opencode_cfg/config.json"
-
-    cat << 'STATE_JSON_EOF' > "$opencode_state/model.json"
-{
-  "recent": [
-    {
-      "providerID": "revenant-local",
-      "modelID": "qwen2.5-coder-1.5b-instruct"
-    }
-  ],
-  "favorite": [
-    {
-      "providerID": "revenant-local",
-      "modelID": "qwen2.5-coder-1.5b-instruct"
-    }
-  ]
-}
-STATE_JSON_EOF
-
-    u_owner=$(stat -c '%u:%g' "$base_user_dir" 2>/dev/null || echo "1000:1000")
-    chown -R "$u_owner" "$opencode_cfg" "$opencode_state" 2>/dev/null || true
+    rm -rf "$base_user_dir/.config/opencode" "$base_user_dir/.local/state/opencode"
+    rm -f "$base_user_dir/Desktop/OpenCode_Agent.desktop" "$base_user_dir/Desktop/opencode.desktop"
   fi
 done
 
-# Wrapper script ensuring local model flag is always passed
-cat << 'WRAPPER_EOF' > /usr/local/bin/revenant-opencode
-#!/usr/bin/env bash
-exec /usr/local/bin/opencode --model revenant-local/qwen2.5-coder-1.5b-instruct "$@"
-WRAPPER_EOF
-chmod +x /usr/local/bin/revenant-opencode
+# Ensure Node.js v22 runtime is installed
+if ! command -v node >/dev/null 2>&1 || ! node -e 'const [m] = process.versions.node.split(".").map(Number); process.exit(m >= 22 ? 0 : 1)' 2>/dev/null; then
+  echo -e "${CYAN}  -> Downloading and installing Node.js v22 runtime...${RESET}"
+  mkdir -p /opt/node /tmp/node_dl
+  if curl -fsSL -L --connect-timeout 20 "https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-x64.tar.xz" -o /tmp/node_dl/node.tar.xz; then
+    tar -xJf /tmp/node_dl/node.tar.xz --strip-components=1 -C /opt/node 2>/dev/null || true
+    ln -sf /opt/node/bin/node /usr/local/bin/node
+    ln -sf /opt/node/bin/npm /usr/local/bin/npm
+    ln -sf /opt/node/bin/npx /usr/local/bin/npx
+    echo -e "${GREEN}[✓] Node.js $(/opt/node/bin/node -v 2>/dev/null || echo 'v22') runtime installed.${RESET}"
+  fi
+  rm -rf /tmp/node_dl
+fi
 
-# Create OpenCode Desktop Launcher
-cat << 'OPENCODE_DESKTOP_EOF' > /usr/share/applications/opencode.desktop
+# Install Pi Coding Agent globally
+if ! command -v pi >/dev/null 2>&1 || [ "$FORCE" = true ]; then
+  echo -e "${CYAN}  -> Installing @earendil-works/pi-coding-agent...${RESET}"
+  if [ -x /opt/node/bin/npm ]; then
+    /opt/node/bin/npm install -g --ignore-scripts @earendil-works/pi-coding-agent 2>/dev/null || true
+    if [ -f /opt/node/bin/pi ]; then
+      ln -sf /opt/node/bin/pi /usr/local/bin/pi
+    fi
+  else
+    npm install -g --ignore-scripts @earendil-works/pi-coding-agent 2>/dev/null || true
+  fi
+fi
+
+# Wrapper script for pi ensuring Node runtime is on PATH
+cat << 'PI_WRAPPER_EOF' > /usr/local/bin/pi
+#!/usr/bin/env bash
+export PATH="/opt/node/bin:$PATH"
+if [ -x /opt/node/bin/pi ]; then
+  exec /opt/node/bin/pi "$@"
+elif command -v pi >/dev/null 2>&1 && [ "$(which pi)" != "/usr/local/bin/pi" ]; then
+  exec "$(which pi)" "$@"
+else
+  exec npx --no-install @earendil-works/pi-coding-agent "$@"
+fi
+PI_WRAPPER_EOF
+chmod +x /usr/local/bin/pi
+ln -sf /usr/local/bin/pi /usr/local/bin/pi-agent 2>/dev/null || true
+
+# Pre-seed Pi Agent configuration and specialized field prompts across skel, root, and user homes
+for base_user_dir in /etc/skel /root /home/*; do
+  if [ -d "$base_user_dir" ]; then
+    pi_base="$base_user_dir/.pi/agent"
+    mkdir -p "$pi_base/prompts"
+
+    # 1. Local llama-server provider configuration (models.json)
+    cat << 'PI_MODELS_EOF' > "$pi_base/models.json"
+{
+  "providers": {
+    "revenant-local": {
+      "baseUrl": "http://127.0.0.1:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "sk-local-revenant",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "qwen2.5-coder-1.5b-instruct",
+          "name": "Qwen 2.5 Coder 1.5B (Local Toughbook)",
+          "contextWindow": 4096,
+          "maxTokens": 512
+        }
+      ]
+    }
+  }
+}
+PI_MODELS_EOF
+
+    # 2. Default model & provider settings (settings.json)
+    cat << 'PI_SETTINGS_EOF' > "$pi_base/settings.json"
+{
+  "defaultProvider": "revenant-local",
+  "defaultModel": "qwen2.5-coder-1.5b-instruct"
+}
+PI_SETTINGS_EOF
+
+    # 3. Pi Motor Mechanic Prompt Template (/mechanic)
+    cat << 'PROMPT_MECHANIC_EOF' > "$pi_base/prompts/mechanic.md"
+---
+description: Automotive & Motor Mechanic Field Diagnostics
+argument-hint: "[vehicle-or-DTC-code]"
+---
+You are the Revenant OS Motor Mechanic Field Diagnostic Agent on a Panasonic Toughbook.
+You specialize in automotive diagnostics, OBD-II DTC troubleshooting (P0xxx, P1xxx, Uxxxx, Bxxxx, Cxxxx), CAN bus analysis, diesel/petrol engine mechanical repair, electrical wiring traces, sensor testing (MAF, MAP, O2, TPS, CKP, CMP), starter/alternator/battery load tests, and component replacement sequences.
+Provide step-by-step, highly practical diagnostic procedures.
+Focus on: $ARGUMENTS
+PROMPT_MECHANIC_EOF
+
+    # 4. Pi Electronics Specialist Prompt Template (/electronics)
+    cat << 'PROMPT_ELECTRONICS_EOF' > "$pi_base/prompts/electronics.md"
+---
+description: Electronics Repair & Circuit Analysis
+argument-hint: "[circuit-or-component-fault]"
+---
+You are the Revenant OS Electronics Diagnostic Specialist on a Panasonic Toughbook.
+You specialize in circuit troubleshooting, board-level repair, semiconductor testing (MOSFETs, diodes, transistors, voltage regulators), multimeter/oscilloscope test points, schematic analysis, soldering/rework guidance, and microcontroller firmware (Arduino, ESP32, STM32, PIC).
+Provide clear, safe, component-level diagnostic steps and pinout details.
+Focus on: $ARGUMENTS
+PROMPT_ELECTRONICS_EOF
+
+    # 5. Pi System Administrator Prompt Template (/sysadmin)
+    cat << 'PROMPT_SYSADMIN_EOF' > "$pi_base/prompts/sysadmin.md"
+---
+description: Linux Field Engineering & Systems Administration
+argument-hint: "[service-or-system-issue]"
+---
+You are the Revenant OS Field Linux Systems Administrator on a Panasonic Toughbook.
+You specialize in Linux system recovery, network diagnostics (ip, ss, tcpdump, ping, ethtool), kernel module troubleshooting, serial interface configuration (/dev/ttyUSB*, /dev/ttyS*), disk and partition repair (fsck, parted, smartctl, dd), systemd service management, and rugged field automation.
+Provide exact, reliable terminal commands and concise technical explanations.
+Focus on: $ARGUMENTS
+PROMPT_SYSADMIN_EOF
+
+    u_owner=$(stat -c '%u:%g' "$base_user_dir" 2>/dev/null || echo "1000:1000")
+    chown -R "$u_owner" "$base_user_dir/.pi" 2>/dev/null || true
+  fi
+done
+
+# Specialized persona wrapper executables
+cat << 'WRAPPER_MECH_EOF' > /usr/local/bin/pi-mechanic
+#!/usr/bin/env bash
+export PATH="/opt/node/bin:$PATH"
+if [ -n "$*" ]; then
+  exec /usr/local/bin/pi "/mechanic $*"
+else
+  exec /usr/local/bin/pi "/mechanic"
+fi
+WRAPPER_MECH_EOF
+chmod +x /usr/local/bin/pi-mechanic
+
+cat << 'WRAPPER_ELEC_EOF' > /usr/local/bin/pi-electronics
+#!/usr/bin/env bash
+export PATH="/opt/node/bin:$PATH"
+if [ -n "$*" ]; then
+  exec /usr/local/bin/pi "/electronics $*"
+else
+  exec /usr/local/bin/pi "/electronics"
+fi
+WRAPPER_ELEC_EOF
+chmod +x /usr/local/bin/pi-electronics
+
+cat << 'WRAPPER_SYS_EOF' > /usr/local/bin/pi-sysadmin
+#!/usr/bin/env bash
+export PATH="/opt/node/bin:$PATH"
+if [ -n "$*" ]; then
+  exec /usr/local/bin/pi "/sysadmin $*"
+else
+  exec /usr/local/bin/pi "/sysadmin"
+fi
+WRAPPER_SYS_EOF
+chmod +x /usr/local/bin/pi-sysadmin
+
+# Desktop applications & launchers
+mkdir -p /usr/share/applications
+cat << 'PI_DESK_EOF' > /usr/share/applications/pi.desktop
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=OpenCode AI Agent
-Comment=Autonomous AI Coding Agent (Terminal UI)
-Exec=xfce4-terminal --title="OpenCode AI Agent" --geometry=110x34 -e "revenant-opencode"
+Name=Pi Field Agent
+Comment=Autonomous AI Coding & Field Agent
+Exec=xfce4-terminal --title="Pi Field Agent" --geometry=110x34 -e "/usr/local/bin/pi"
 Icon=utilities-terminal
 Terminal=false
-Categories=Development;IDE;
-OPENCODE_DESKTOP_EOF
+Categories=Development;System;
+PI_DESK_EOF
+
+cat << 'MECH_DESK_EOF' > /usr/share/applications/pi-mechanic.desktop
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Pi Motor Mechanic
+Comment=Automotive & OBD-II Field Diagnostic Specialist
+Exec=xfce4-terminal --title="Pi Motor Mechanic" --geometry=110x34 -e "/usr/local/bin/pi-mechanic"
+Icon=preferences-system
+Terminal=false
+Categories=Development;System;Utility;
+MECH_DESK_EOF
+
+cat << 'ELEC_DESK_EOF' > /usr/share/applications/pi-electronics.desktop
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Pi Electronics Specialist
+Comment=Circuit Board & Component Diagnostic Specialist
+Exec=xfce4-terminal --title="Pi Electronics Specialist" --geometry=110x34 -e "/usr/local/bin/pi-electronics"
+Icon=applications-engineering
+Terminal=false
+Categories=Development;System;Utility;
+ELEC_DESK_EOF
+
+cat << 'SYS_DESK_EOF' > /usr/share/applications/pi-sysadmin.desktop
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Pi System Admin
+Comment=Linux Field Recovery & Systems Administration
+Exec=xfce4-terminal --title="Pi System Admin" --geometry=110x34 -e "/usr/local/bin/pi-sysadmin"
+Icon=system-run
+Terminal=false
+Categories=Development;System;Utility;
+SYS_DESK_EOF
 
 for ddir in /etc/skel/Desktop /root/Desktop /home/*/Desktop; do
   if [ -d "$ddir" ]; then
-    cp -f /usr/share/applications/opencode.desktop "$ddir/OpenCode_Agent.desktop" 2>/dev/null || true
-    chmod +x "$ddir/OpenCode_Agent.desktop" 2>/dev/null || true
+    rm -f "$ddir/OpenCode_Agent.desktop" "$ddir/opencode.desktop" 2>/dev/null || true
+    for pdesk in pi.desktop pi-mechanic.desktop pi-electronics.desktop pi-sysadmin.desktop; do
+      cp -f "/usr/share/applications/$pdesk" "$ddir/" 2>/dev/null || true
+      chmod +x "$ddir/$pdesk" 2>/dev/null || true
+    done
     u_owner=$(stat -c '%u:%g' "$ddir" 2>/dev/null || echo "1000:1000")
-    chown "$u_owner" "$ddir/OpenCode_Agent.desktop" 2>/dev/null || true
+    chown "$u_owner" "$ddir/"pi*.desktop 2>/dev/null || true
   fi
 done
 
@@ -1037,7 +1166,7 @@ mkdir -p /usr/share/revenant/skills
 if [ -d "$SCRIPT_DIR/skills" ]; then
   cp -a "$SCRIPT_DIR/skills/"* /usr/share/revenant/skills/ 2>/dev/null || true
 fi
-echo -e "${GREEN}[✓] OpenCode offline configuration, wrapper, and desktop launcher ready.${RESET}"
+echo -e "${GREEN}[✓] Pi Agent and specialized field personas (Mechanic, Electronics, Sysadmin) ready.${RESET}"
 
 # TIER 3: Universal 'ai' Command (Offline Local Integration)
 echo ""
@@ -1428,6 +1557,10 @@ for i3_cfg in /etc/i3/config /etc/skel/.config/i3/config /root/.config/i3/config
   if [ -f "$i3_cfg" ]; then
     sed -i '/revenant-voice/d' "$i3_cfg" 2>/dev/null || true
     sed -i '/revenant-opencode/d' "$i3_cfg" 2>/dev/null || true
+    sed -i '/pi-mechanic/d' "$i3_cfg" 2>/dev/null || true
+    sed -i '/pi-electronics/d' "$i3_cfg" 2>/dev/null || true
+    sed -i '/title="Pi /d' "$i3_cfg" 2>/dev/null || true
+    sed -i '/title="OpenCode/d' "$i3_cfg" 2>/dev/null || true
     sed -i '/revenant-i3-help/d' "$i3_cfg" 2>/dev/null || true
     sed -i '/Revenant OS Voice Assistant Hotkeys/d' "$i3_cfg" 2>/dev/null || true
     sed -i '/Revenant OS Hotkeys & Quick Reference/d' "$i3_cfg" 2>/dev/null || true
@@ -1436,7 +1569,9 @@ for i3_cfg in /etc/i3/config /etc/skel/.config/i3/config /root/.config/i3/config
 # Revenant OS Hotkeys & Quick Reference
 bindsym $mod+m exec --no-startup-id /usr/local/bin/revenant-voice
 bindsym Mod1+Control+m exec --no-startup-id /usr/local/bin/revenant-voice
-bindsym $mod+Shift+c exec --no-startup-id xfce4-terminal --title="OpenCode AI Agent" --geometry=110x34 -e "revenant-opencode"
+bindsym $mod+Shift+c exec --no-startup-id xfce4-terminal --title="Pi Field Agent" --geometry=110x34 -e "pi"
+bindsym $mod+Shift+m exec --no-startup-id xfce4-terminal --title="Pi Motor Mechanic" --geometry=110x34 -e "pi-mechanic"
+bindsym $mod+Shift+e exec --no-startup-id xfce4-terminal --title="Pi Electronics Specialist" --geometry=110x34 -e "pi-electronics"
 bindsym $mod+F1 exec --no-startup-id /usr/local/bin/revenant-i3-help
 I3_HOTKEY
   fi
@@ -1780,7 +1915,12 @@ cat << EOF > "$LOCAL_VERSION_FILE"
   },
   "agent_core": {
     "revenant_agent": "native-voice-enabled",
-    "opencode": "v1.18.30",
+    "pi_agent": "@earendil-works/pi-coding-agent",
+    "specialized_personas": [
+      "mechanic",
+      "electronics",
+      "sysadmin"
+    ],
     "agent_reach": "active",
     "whisper_stt": "whisper.cpp-tiny.en",
     "piper_tts": "2023.11.14-2",

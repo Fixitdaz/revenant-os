@@ -1,11 +1,11 @@
 {
   "os_name": "Revenant OS",
   "version": "1.1.0",
-  "build": "19.2",
-  "display": "Revenant OS 1.1 (Build 19.2 - Agentic Developer Edition)",
+  "build": "19.3",
+  "display": "Revenant OS 1.1 (Build 19.3 - Agentic Field Specialist Edition)",
   "channel": "beta",
   "target_hardware": "Panasonic Toughbook CF-52 & Field Laptops",
-  "release_date": "2026-09-15",
+  "release_date": "2026-09-16",
   "kernel": "6.1.0-50-amd64",
   "local_inference": {
     "engine": "llama-server",
@@ -15,7 +15,12 @@
   },
   "agent_core": {
     "revenant_agent": "native-voice-enabled",
-    "opencode": "v1.18.30",
+    "pi_agent": "@earendil-works/pi-coding-agent",
+    "specialized_personas": [
+      "mechanic",
+      "electronics",
+      "sysadmin"
+    ],
     "agent_reach": "active",
     "whisper_stt": "whisper.cpp-tiny.en",
     "piper_tts": "2023.11.14-2",
