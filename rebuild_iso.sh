@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="/var/tmp/toughbook_rebuild_1_1"
 PATCH_ROOT="/var/tmp/patch_root_1_1"
 ISO_SOURCE="$SCRIPT_DIR/revenant_os_toughbook_v15_5.iso"
-ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build19.5.iso"
+ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build19.6.iso"
 ISO_ALIAS="$SCRIPT_DIR/revenant_os_latest.iso"
 CACHE_DIR="/var/tmp/revenant_cache"
 
@@ -111,8 +111,11 @@ chmod +x "$PATCH_ROOT/opt/llama.cpp/llama-server" 2>/dev/null || true
 
 # Ensure model GGUF is present in squashfs (safety net in case source ISO chain breaks)
 mkdir -p "$PATCH_ROOT/opt/models"
-if [ -f "$CACHE_DIR/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf" ] && [ ! -f "$PATCH_ROOT/opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf" ]; then
-  echo "[*] Copying Qwen2.5-Coder-1.5B model into squashfs root..."
+if [ -f "$CACHE_DIR/qwen2.5-coder-3b-instruct-q4_k_m.gguf" ] && [ ! -f "$PATCH_ROOT/opt/models/qwen2.5-coder-3b-instruct-q4_k_m.gguf" ]; then
+  echo "[*] Copying Qwen2.5-Coder-3B model into squashfs root..."
+  cp "$CACHE_DIR/qwen2.5-coder-3b-instruct-q4_k_m.gguf" "$PATCH_ROOT/opt/models/"
+elif [ -f "$CACHE_DIR/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf" ] && [ ! -f "$PATCH_ROOT/opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf" ]; then
+  echo "[*] Copying Qwen2.5-Coder-1.5B fallback model into squashfs root..."
   cp "$CACHE_DIR/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf" "$PATCH_ROOT/opt/models/"
 fi
 
@@ -130,7 +133,7 @@ StartLimitBurst=0
 [Service]
 Type=simple
 Environment=LD_LIBRARY_PATH=/opt/llama.cpp
-ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --alias qwen2.5-coder-1.5b-instruct --host 127.0.0.1 --port 8080 --ctx-size 4096 --threads 2 -np 1 --no-cache-prompt -sps 0 --repeat-penalty 1.15 --repeat-last-n 128 --n-gpu-layers 0
+ExecStart=/bin/bash -c 'MODEL=/opt/models/qwen2.5-coder-3b-instruct-q4_k_m.gguf; [ -f "$MODEL" ] || MODEL=/opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf; exec /opt/llama.cpp/llama-server --model "$MODEL" --alias qwen2.5-coder-3b-instruct --alias qwen2.5-coder-1.5b-instruct --alias default --host 127.0.0.1 --port 8080 --ctx-size 4096 --threads 2 -np 1 -sps 0 --repeat-penalty 1.20 --repeat-last-n 128 --presence-penalty 0.1 --n-gpu-layers 0'
 Restart=always
 RestartSec=5
 User=root
@@ -768,7 +771,7 @@ PROMPT_SYSADMIN_GLOBAL_EOF
 for pi_base in "$PATCH_ROOT/etc/skel/.pi/agent" "$PATCH_ROOT/home/user/.pi/agent" "$PATCH_ROOT/home/revenant/.pi/agent"; do
   mkdir -p "$pi_base/prompts"
 
-  # 1. Local llama-server provider configuration (models.json)
+  # 1. Local llama-server provider configuration + OpenRouter cloud API option (models.json)
   cat << 'PI_MODELS_EOF' > "$pi_base/models.json"
 {
   "providers": {
@@ -782,10 +785,35 @@ for pi_base in "$PATCH_ROOT/etc/skel/.pi/agent" "$PATCH_ROOT/home/user/.pi/agent
       },
       "models": [
         {
-          "id": "qwen2.5-coder-1.5b-instruct",
-          "name": "Qwen 2.5 Coder 1.5B (Local Toughbook)",
+          "id": "qwen2.5-coder-3b-instruct",
+          "name": "Qwen 2.5 Coder 3B (Local Toughbook)",
           "contextWindow": 4096,
           "maxTokens": 512
+        },
+        {
+          "id": "qwen2.5-coder-1.5b-instruct",
+          "name": "Qwen 2.5 Coder 1.5B (Fallback Local)",
+          "contextWindow": 4096,
+          "maxTokens": 512
+        }
+      ]
+    },
+    "openrouter": {
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "api": "openai-completions",
+      "apiKey": "env:OPENROUTER_API_KEY",
+      "models": [
+        {
+          "id": "deepseek/deepseek-chat",
+          "name": "DeepSeek V3 (OpenRouter Cloud API)",
+          "contextWindow": 64000,
+          "maxTokens": 2048
+        },
+        {
+          "id": "anthropic/claude-3.5-sonnet",
+          "name": "Claude 3.5 Sonnet (OpenRouter Cloud API)",
+          "contextWindow": 128000,
+          "maxTokens": 4096
         }
       ]
     }
@@ -797,7 +825,7 @@ PI_MODELS_EOF
   cat << 'PI_SETTINGS_EOF' > "$pi_base/settings.json"
 {
   "defaultProvider": "revenant-local",
-  "defaultModel": "qwen2.5-coder-1.5b-instruct"
+  "defaultModel": "qwen2.5-coder-3b-instruct"
 }
 PI_SETTINGS_EOF
 
@@ -842,15 +870,33 @@ if ! curl -s -f -m 1 "http://127.0.0.1:8080/health" >/dev/null 2>&1 && ! curl -s
   echo ""
 fi
 
+# Auto-detect whether 3B or 1.5B is available locally
+LOCAL_MODEL="qwen2.5-coder-3b-instruct"
+if [ ! -f /opt/models/qwen2.5-coder-3b-instruct-q4_k_m.gguf ] && [ -f /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf ]; then
+  LOCAL_MODEL="qwen2.5-coder-1.5b-instruct"
+fi
+
+# Handle Cloud API override if configured by user
+ACTIVE_PROVIDER="revenant-local"
+ACTIVE_MODEL="$LOCAL_MODEL"
+OFFLINE_ARGS=(--offline)
+
+if [ -n "$OPENROUTER_API_KEY" ] && [ "$PI_PROVIDER" = "openrouter" ]; then
+  ACTIVE_PROVIDER="openrouter"
+  ACTIVE_MODEL="deepseek/deepseek-chat"
+  OFFLINE_ARGS=()
+  unset PI_OFFLINE
+fi
+
 PI_CLI="/opt/node/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
 
 if [ -f "$PI_CLI" ]; then
-  exec /opt/node/bin/node "$PI_CLI" --offline --provider revenant-local --model qwen2.5-coder-1.5b-instruct "$@"
+  exec /opt/node/bin/node "$PI_CLI" "${OFFLINE_ARGS[@]}" --provider "$ACTIVE_PROVIDER" --model "$ACTIVE_MODEL" --no-skills --no-context-files "$@"
 elif [ -x /opt/node/bin/pi ] && ! grep -q "PI_WRAPPER" /opt/node/bin/pi 2>/dev/null; then
-  exec /opt/node/bin/pi --offline --provider revenant-local --model qwen2.5-coder-1.5b-instruct "$@"
+  exec /opt/node/bin/pi "${OFFLINE_ARGS[@]}" --provider "$ACTIVE_PROVIDER" --model "$ACTIVE_MODEL" --no-skills --no-context-files "$@"
 else
   echo -e "${RED}[!] Pi Agent CLI bundle not found in /opt/node.${RESET}"
-  exec /opt/node/bin/node "$PI_CLI" --offline --provider revenant-local --model qwen2.5-coder-1.5b-instruct "$@"
+  exec /opt/node/bin/node "$PI_CLI" "${OFFLINE_ARGS[@]}" --provider "$ACTIVE_PROVIDER" --model "$ACTIVE_MODEL" --no-skills --no-context-files "$@"
 fi
 PI_WRAPPER_EOF
 chmod +x "$PATCH_ROOT/usr/local/bin/pi"
@@ -1594,7 +1640,7 @@ zenity --question --title="Confirm Installation" \
   --ok-label="Yes, Erase & Install" --cancel-label="Cancel" || exit 0
 
 LOG="/tmp/revenant_install.log"
-echo "=== Revenant OS 1.1 (Build 19.5) Installation Started ===" > "$LOG"
+echo "=== Revenant OS 1.1 (Build 19.6) Installation Started ===" > "$LOG"
 date >> "$LOG"
 
 (
@@ -1958,7 +2004,7 @@ insmod ext2
 set root='hd0,msdos1'
 search --no-floppy --fs-uuid --set=root $UUID
 
-menuentry "Revenant OS 1.1 (Build 19.5) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 19.6) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -1967,7 +2013,7 @@ menuentry "Revenant OS 1.1 (Build 19.5) - Agentic Linux" --class debian --class 
     initrd /boot/$INITRD
 }
 
-menuentry "Revenant OS 1.1 (Build 19.5) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 19.6) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -1991,11 +2037,11 @@ umount -l /mnt/target/dev 2>/dev/null || true
 umount -l /mnt/target 2>/dev/null || true
 
 echo "100"; echo "# Installation Complete!"
-) | zenity --progress --title="Installing Revenant OS 1.1 (Build 19.5)" --text="Starting installation..." --percentage=0 --auto-close
+) | zenity --progress --title="Installing Revenant OS 1.1 (Build 19.6)" --text="Starting installation..." --percentage=0 --auto-close
 
 if [ -f "$LOG" ] && grep -iq "Installing for i386-pc platform" "$LOG"; then
   zenity --info --title="Success" \
-    --text="<b>Revenant OS 1.1 (Build 19.5) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
+    --text="<b>Revenant OS 1.1 (Build 19.6) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
 else
   zenity --error --title="Error" \
     --text="An error occurred during installation. Check /tmp/revenant_install.log or the target drive."
@@ -2023,12 +2069,12 @@ if background_image /boot/grub/splash.png; then
   set color_highlight=cyan/black
 fi
 
-menuentry "Revenant OS 1.1 (Build 19.5) - Agentic Core (Offline Voice + Local LLM + Pi Agent)" {
+menuentry "Revenant OS 1.1 (Build 19.6) - Agentic Core (Offline Voice + Local LLM + Pi Agent)" {
     linux /live/vmlinuz boot=live components quiet splash
     initrd /live/initrd.img
 }
 
-menuentry "Revenant OS 1.1 (Build 19.5) (Safe Graphics / Failsafe)" {
+menuentry "Revenant OS 1.1 (Build 19.6) (Safe Graphics / Failsafe)" {
     linux /live/vmlinuz boot=live components nomodeset
     initrd /live/initrd.img
 }
@@ -2037,13 +2083,13 @@ EOF
 echo "[*] Packaging patched SquashFS (xz compression)..."
 mksquashfs "$PATCH_ROOT" "$WORKSPACE_DIR/image/live/filesystem.squashfs" -comp xz
 
-echo "[*] Building 1.1 Build 19.5 ISO with hybrid bootloader..."
-grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 19.5)"
+echo "[*] Building 1.1 Build 19.6 ISO with hybrid bootloader..."
+grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 19.6)"
 cp -f "$ISO_TARGET" "$ISO_ALIAS"
 
 echo "[*] Cleaning up workspace..."
 rm -rf "$WORKSPACE_DIR" "$PATCH_ROOT"
 
-echo "[*] Build Complete! Revenant OS 1.1 (Build 19.5) ISO ready at: $ISO_TARGET"
+echo "[*] Build Complete! Revenant OS 1.1 (Build 19.6) ISO ready at: $ISO_TARGET"
 ls -lh "$ISO_TARGET" "$ISO_ALIAS"
 

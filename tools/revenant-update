@@ -363,8 +363,20 @@ if [ ! -f /opt/llama.cpp/llama-server ] || [ "$FORCE" = true ]; then
   fi
 fi
 
-if [ ! -f /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf ] || [ "$FORCE" = true ]; then
-  echo -e "${CYAN}  -> Downloading Qwen2.5-Coder-1.5B (Q4_K_M GGUF, ~1.04GB)...${RESET}"
+if [ ! -f /opt/models/qwen2.5-coder-3b-instruct-q4_k_m.gguf ] || [ "$FORCE" = true ]; then
+  echo -e "${CYAN}  -> Downloading Qwen2.5-Coder-3B (Q4_K_M GGUF, ~2.1GB)...${RESET}"
+  mkdir -p /opt/models
+  if curl -L --progress-bar -o /opt/models/qwen2.5-coder-3b-instruct-q4_k_m.gguf \
+    https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/qwen2.5-coder-3b-instruct-q4_k_m.gguf; then
+    echo -e "${GREEN}[✓] Qwen2.5-Coder-3B model downloaded successfully.${RESET}"
+  else
+    echo -e "${YELLOW}[!] Download of 3B model did not finish; preserving existing model.${RESET}"
+  fi
+fi
+
+# Fallback: if 3B is missing, ensure 1.5B is available
+if [ ! -f /opt/models/qwen2.5-coder-3b-instruct-q4_k_m.gguf ] && [ ! -f /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf ]; then
+  echo -e "${CYAN}  -> Downloading Qwen2.5-Coder-1.5B fallback (~1.04GB)...${RESET}"
   curl -L --progress-bar -o /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf \
     https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf || true
 fi
@@ -378,7 +390,7 @@ StartLimitBurst=0
 [Service]
 Type=simple
 Environment=LD_LIBRARY_PATH=/opt/llama.cpp
-ExecStart=/opt/llama.cpp/llama-server --model /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --alias qwen2.5-coder-1.5b-instruct --host 127.0.0.1 --port 8080 --ctx-size 4096 --threads 2 -np 1 --no-cache-prompt -sps 0 --repeat-penalty 1.15 --repeat-last-n 128 --n-gpu-layers 0
+ExecStart=/bin/bash -c 'MODEL=/opt/models/qwen2.5-coder-3b-instruct-q4_k_m.gguf; [ -f "$MODEL" ] || MODEL=/opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf; exec /opt/llama.cpp/llama-server --model "$MODEL" --alias qwen2.5-coder-3b-instruct --alias qwen2.5-coder-1.5b-instruct --alias default --host 127.0.0.1 --port 8080 --ctx-size 4096 --threads 2 -np 1 -sps 0 --repeat-penalty 1.20 --repeat-last-n 128 --presence-penalty 0.1 --n-gpu-layers 0'
 Restart=always
 RestartSec=5
 User=root
@@ -391,7 +403,7 @@ pkill -9 -f llama-server 2>/dev/null || true
 systemctl daemon-reload
 systemctl enable llama-server.service 2>/dev/null || true
 systemctl restart llama-server.service 2>/dev/null || true
-echo -e "${GREEN}[✓] Local inference server configured on http://127.0.0.1:8080/v1 (4K context, no-cache-prompt, fast CPU golden config)${RESET}"
+echo -e "${GREEN}[✓] Local inference server configured on http://127.0.0.1:8080/v1 (4K context, KV prompt caching enabled, fast CPU golden config)${RESET}"
 
 # Rewrite revenant-services desktop launcher script (fixes truncation bugs from V15.7 and earlier)
 echo -e "${CYAN}  -> Updating AI Engine desktop launcher script...${RESET}"
@@ -1044,16 +1056,34 @@ if ! curl -s -f -m 1 "http://127.0.0.1:8080/health" >/dev/null 2>&1 && ! curl -s
   echo ""
 fi
 
+# Auto-detect whether 3B or 1.5B is available locally
+LOCAL_MODEL="qwen2.5-coder-3b-instruct"
+if [ ! -f /opt/models/qwen2.5-coder-3b-instruct-q4_k_m.gguf ] && [ -f /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf ]; then
+  LOCAL_MODEL="qwen2.5-coder-1.5b-instruct"
+fi
+
+# Handle Cloud API override if configured by user
+ACTIVE_PROVIDER="revenant-local"
+ACTIVE_MODEL="$LOCAL_MODEL"
+OFFLINE_ARGS=(--offline)
+
+if [ -n "$OPENROUTER_API_KEY" ] && [ "$PI_PROVIDER" = "openrouter" ]; then
+  ACTIVE_PROVIDER="openrouter"
+  ACTIVE_MODEL="deepseek/deepseek-chat"
+  OFFLINE_ARGS=()
+  unset PI_OFFLINE
+fi
+
 PI_CLI="/opt/node/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
 
 if [ -f "$PI_CLI" ]; then
-  exec /opt/node/bin/node "$PI_CLI" --offline --provider revenant-local --model qwen2.5-coder-1.5b-instruct "$@"
+  exec /opt/node/bin/node "$PI_CLI" "${OFFLINE_ARGS[@]}" --provider "$ACTIVE_PROVIDER" --model "$ACTIVE_MODEL" --no-skills --no-context-files "$@"
 elif [ -x /opt/node/bin/pi ] && ! grep -q "PI_WRAPPER" /opt/node/bin/pi 2>/dev/null; then
-  exec /opt/node/bin/pi --offline --provider revenant-local --model qwen2.5-coder-1.5b-instruct "$@"
+  exec /opt/node/bin/pi "${OFFLINE_ARGS[@]}" --provider "$ACTIVE_PROVIDER" --model "$ACTIVE_MODEL" --no-skills --no-context-files "$@"
 else
   echo -e "${RED}[!] Pi Agent CLI bundle not found in /opt/node. Running repair...${RESET}"
   /opt/node/bin/npm install -g --force @earendil-works/pi-coding-agent
-  exec /opt/node/bin/node "$PI_CLI" --offline --provider revenant-local --model qwen2.5-coder-1.5b-instruct "$@"
+  exec /opt/node/bin/node "$PI_CLI" "${OFFLINE_ARGS[@]}" --provider "$ACTIVE_PROVIDER" --model "$ACTIVE_MODEL" --no-skills --no-context-files "$@"
 fi
 PI_WRAPPER_EOF
 chmod +x /usr/local/bin/pi
@@ -1065,7 +1095,7 @@ for base_user_dir in /etc/skel /root /home/*; do
     pi_base="$base_user_dir/.pi/agent"
     mkdir -p "$pi_base/prompts"
 
-    # 1. Local llama-server provider configuration (models.json)
+    # 1. Local llama-server provider configuration + OpenRouter cloud API option (models.json)
     cat << 'PI_MODELS_EOF' > "$pi_base/models.json"
 {
   "providers": {
@@ -1079,10 +1109,35 @@ for base_user_dir in /etc/skel /root /home/*; do
       },
       "models": [
         {
-          "id": "qwen2.5-coder-1.5b-instruct",
-          "name": "Qwen 2.5 Coder 1.5B (Local Toughbook)",
+          "id": "qwen2.5-coder-3b-instruct",
+          "name": "Qwen 2.5 Coder 3B (Local Toughbook)",
           "contextWindow": 4096,
           "maxTokens": 512
+        },
+        {
+          "id": "qwen2.5-coder-1.5b-instruct",
+          "name": "Qwen 2.5 Coder 1.5B (Fallback Local)",
+          "contextWindow": 4096,
+          "maxTokens": 512
+        }
+      ]
+    },
+    "openrouter": {
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "api": "openai-completions",
+      "apiKey": "env:OPENROUTER_API_KEY",
+      "models": [
+        {
+          "id": "deepseek/deepseek-chat",
+          "name": "DeepSeek V3 (OpenRouter Cloud API)",
+          "contextWindow": 64000,
+          "maxTokens": 2048
+        },
+        {
+          "id": "anthropic/claude-3.5-sonnet",
+          "name": "Claude 3.5 Sonnet (OpenRouter Cloud API)",
+          "contextWindow": 128000,
+          "maxTokens": 4096
         }
       ]
     }
@@ -1094,7 +1149,7 @@ PI_MODELS_EOF
     cat << 'PI_SETTINGS_EOF' > "$pi_base/settings.json"
 {
   "defaultProvider": "revenant-local",
-  "defaultModel": "qwen2.5-coder-1.5b-instruct"
+  "defaultModel": "qwen2.5-coder-3b-instruct"
 }
 PI_SETTINGS_EOF
 
@@ -1989,7 +2044,7 @@ cat << EOF > "$LOCAL_VERSION_FILE"
   "display": "Revenant OS $REMOTE_VER (Build $REMOTE_BUILD)",
   "local_inference": {
     "engine": "llama-server",
-    "model": "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+    "model": "$([ -f /opt/models/qwen2.5-coder-3b-instruct-q4_k_m.gguf ] && echo 'qwen2.5-coder-3b-instruct-q4_k_m.gguf' || echo 'qwen2.5-coder-1.5b-instruct-q4_k_m.gguf')",
     "port": 8080,
     "context_size": 4096
   },
