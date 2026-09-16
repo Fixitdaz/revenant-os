@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="/var/tmp/toughbook_rebuild_1_1"
 PATCH_ROOT="/var/tmp/patch_root_1_1"
 ISO_SOURCE="$SCRIPT_DIR/revenant_os_toughbook_v15_5.iso"
-ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build19.6.iso"
+ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build19.7.iso"
 ISO_ALIAS="$SCRIPT_DIR/revenant_os_latest.iso"
 CACHE_DIR="/var/tmp/revenant_cache"
 
@@ -288,9 +288,14 @@ mkdir -p "$PATCH_ROOT/opt/whisper/models"
 cat << 'AGENT_EOF' > "$PATCH_ROOT/usr/local/bin/revenant-agent"
 #!/usr/bin/env python3
 # ==============================================================================
-# Revenant OS - Native Autonomous Agent Core (CPU-Optimized for Panasonic Toughbook)
+# Revenant OS - Unified Autonomous Field Agent Core (CPU-Optimized for Toughbook)
+# Personas: General, Mechanic (Automotive/CAN), Electronics (Circuits), SysAdmin
+# Memory: OpenViking integration (/remember, /recall, auto-context)
+# Engines: Local (Qwen 2.5 Coder 3B) & OmniRoute/Cloud API (/cloud, /local)
+# Hardware: Toughbook CF-52 Mic Boost, Whisper STT, Piper TTS & Telemetry
 # ==============================================================================
-import sys, os, json, re, urllib.request, subprocess, glob, time, signal, atexit
+import sys, os, json, re, urllib.request, urllib.error, subprocess, glob, time, signal, atexit, shutil
+
 try:
     import readline
 except ImportError:
@@ -300,21 +305,67 @@ CYAN = "\033[96m"
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
 RED = "\033[91m"
+MAGENTA = "\033[95m"
 BOLD = "\033[1m"
 DIM = "\033[2m"
 RESET = "\033[0m"
 
-SYSTEM_PROMPT = """You are the Revenant OS Autonomous Agent on a Panasonic Toughbook.
-You are concise, highly practical, and expert in Linux systems.
-You can inspect the system and run actions using these commands:
+PERSONAS = {
+    "general": {
+        "name": "General Field Assistant",
+        "color": CYAN,
+        "prompt": """You are the Revenant OS Autonomous Field Agent on a Panasonic Toughbook.
+You are concise, highly practical, and an expert in Linux systems, bash automation, and computing.
+You can inspect the system and run actions using:
 - [EXEC: bash_command] to execute terminal commands (e.g. [EXEC: df -h], [EXEC: ip a])
 - [READ: filepath] to view file contents
 - [WRITE: filepath | content] to create or update files
-Keep explanations brief. Provide the command needed to solve the user's task."""
+Keep explanations brief and action-oriented."""
+    },
+    "mechanic": {
+        "name": "Motor Mechanic Specialist",
+        "color": YELLOW,
+        "prompt": """You are the Revenant OS Motor Mechanic Field Diagnostic Agent on a Panasonic Toughbook.
+You specialize in automotive diagnostics, OBD-II DTC troubleshooting (P0xxx, P1xxx, Uxxxx, Bxxxx, Cxxxx), CAN bus analysis (candump, cansend, can-utils), diesel/petrol engine mechanical repair, electrical wiring traces, sensor testing (MAF, MAP, O2, TPS, CKP, CMP), starter/alternator/battery load tests, and component replacement sequences.
+You can run diagnostic actions using:
+- [EXEC: bash_command] to run diagnostic commands (e.g. candump can0, dmesg, serial queries)
+- [READ: filepath] to view logs or DTC manuals
+- [WRITE: filepath | content] to record vehicle inspection notes
+Provide step-by-step, highly practical diagnostic procedures."""
+    },
+    "electronics": {
+        "name": "Electronics Specialist",
+        "color": MAGENTA,
+        "prompt": """You are the Revenant OS Electronics Diagnostic Specialist on a Panasonic Toughbook.
+You specialize in circuit troubleshooting, board-level repair, semiconductor testing (MOSFETs, diodes, transistors, voltage regulators), multimeter/oscilloscope test points, schematic analysis, soldering/rework guidance, and microcontroller firmware (Arduino, ESP32, STM32, PIC).
+You can inspect and flash hardware using:
+- [EXEC: bash_command] to run commands (e.g. lsusb, dmesg, minicom, avrdude, esptool)
+- [READ: filepath] to inspect pinouts or datasheets
+- [WRITE: filepath | content] to write firmware or notes
+Provide clear, safe, component-level diagnostic steps and pinout details."""
+    },
+    "sysadmin": {
+        "name": "Linux Systems Administrator",
+        "color": GREEN,
+        "prompt": """You are the Revenant OS Field Linux Systems Administrator on a Panasonic Toughbook.
+You specialize in Linux system recovery, network diagnostics (ip, ss, tcpdump, ping, ethtool), kernel module troubleshooting, serial interface configuration (/dev/ttyUSB*, /dev/ttyS*), disk and partition repair (fsck, parted, smartctl, dd), systemd service management, and rugged field automation.
+You can perform administrative recovery using:
+- [EXEC: bash_command] to execute recovery actions
+- [READ: filepath] to read configs and system logs
+- [WRITE: filepath | content] to patch system configurations
+Provide exact, reliable terminal commands and concise technical explanations."""
+    }
+}
 
+CONFIG_DIR = os.path.expanduser("~/.revenant")
+CLOUD_CONF_PATH = os.path.join(CONFIG_DIR, "cloud.conf")
+MEMORY_FALLBACK_PATH = os.path.join(CONFIG_DIR, "agent_memory.json")
 PID_FILE = "/tmp/revenant_agent.pid"
+
 VOICE_ENABLED = False
 mic_requested = False
+current_mode = "general"
+current_engine = "local"
 
 def cleanup_pid():
     try:
@@ -347,7 +398,6 @@ except Exception:
     pass
 
 def set_input_buffer(text):
-    """Prefill the interactive readline prompt so user can review/edit and hit Enter."""
     if not text or not readline:
         return
     def pre_hook():
@@ -375,7 +425,6 @@ def speak_text(text):
         subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def configure_microphone():
-    """Unmute and boost Panasonic Toughbook CF-52 microphone capture channels."""
     controls = [
         "amixer -q set Capture 95% unmute",
         "amixer -q set 'Capture',0 95% unmute",
@@ -392,7 +441,6 @@ def configure_microphone():
         subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def record_voice(duration=5, output_wav="/tmp/revenant_voice.wav"):
-    """Record audio from Toughbook microphone using arecord (16kHz 16-bit mono for Whisper)."""
     configure_microphone()
     try:
         if os.path.exists(output_wav):
@@ -401,33 +449,21 @@ def record_voice(duration=5, output_wav="/tmp/revenant_voice.wav"):
             except Exception:
                 pass
         print(f"\n{YELLOW}🎙️  [Listening... Speak into microphone ({duration}s)...]{RESET}")
-
-        # Primary attempt: default ALSA / Pulse / Pipewire
         cmd = f"arecord -q -d {duration} -r 16000 -c 1 -f S16_LE '{output_wav}'"
         res = subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        # Fallback 1: plughw:0,0
         if res.returncode != 0 or not os.path.exists(output_wav) or os.path.getsize(output_wav) < 1000:
             cmd = f"arecord -q -D plughw:0,0 -d {duration} -r 16000 -c 1 -f S16_LE '{output_wav}'"
             res = subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        # Fallback 2: stereo capture with downmix
-        if res.returncode != 0 or not os.path.exists(output_wav) or os.path.getsize(output_wav) < 1000:
-            cmd = f"arecord -q -d {duration} -r 16000 -c 2 -f S16_LE /tmp/revenant_stereo.wav && (ffmpeg -y -i /tmp/revenant_stereo.wav -ac 1 '{output_wav}' 2>/dev/null || cp /tmp/revenant_stereo.wav '{output_wav}')"
-            subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
         return os.path.exists(output_wav) and os.path.getsize(output_wav) > 1000
     except Exception as e:
         print(f"{RED}[!] Audio record error: {e}{RESET}")
         return False
 
 def transcribe_voice(wav_path="/tmp/revenant_voice.wav"):
-    """Transcribe audio locally using whisper.cpp (ggml-tiny.en)."""
     if not os.path.exists(wav_path):
         return ""
     whisper_bin = "/opt/whisper/whisper-cli"
     model_path = "/opt/whisper/models/ggml-tiny.en.bin"
-
     print(f"{CYAN}⚡ [Transcribing voice with local Whisper STT...]{RESET}")
     if os.path.exists(whisper_bin) and os.path.exists(model_path):
         try:
@@ -436,11 +472,9 @@ def transcribe_voice(wav_path="/tmp/revenant_voice.wav"):
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30
             )
             raw = proc.stdout.strip()
-            clean = re.sub(r'\[.*?\]', '', raw).strip()
-            return clean
-        except Exception as e:
-            print(f"{RED}[!] Whisper error: {e}{RESET}")
-
+            return re.sub(r'\[.*?\]', '', raw).strip()
+        except Exception:
+            pass
     try:
         from pywhispercpp.model import Model
         m = Model('tiny.en', models_dir='/opt/whisper/models')
@@ -448,8 +482,6 @@ def transcribe_voice(wav_path="/tmp/revenant_voice.wav"):
         return " ".join([s.text for s in segs]).strip()
     except Exception:
         pass
-
-    print(f"{YELLOW}[!] Whisper STT not ready. Run 'sudo revenant-update' to install.{RESET}")
     return ""
 
 def handle_mic_input():
@@ -463,7 +495,7 @@ def handle_mic_input():
         else:
             print(f"{YELLOW}[No speech detected or transcription empty]{RESET}\n")
     else:
-        print(f"{RED}[!] Could not capture audio from microphone. Check connections.{RESET}\n")
+        print(f"{RED}[!] Could not capture audio from microphone.{RESET}\n")
     return ""
 
 def get_system_telemetry():
@@ -472,16 +504,14 @@ def get_system_telemetry():
     if bats:
         try:
             with open(bats[0]) as f:
-                cap = f.read().strip()
-            telemetry.append(f"Battery: {cap}%")
+                telemetry.append(f"Battery: {f.read().strip()}%")
         except Exception:
             pass
     temps = glob.glob('/sys/class/thermal/thermal_zone*/temp')
     if temps:
         try:
             with open(temps[0]) as f:
-                t = int(f.read().strip()) / 1000.0
-            telemetry.append(f"Temp: {t:.1f}°C")
+                telemetry.append(f"Temp: {int(f.read().strip())/1000.0:.1f}°C")
         except Exception:
             pass
     try:
@@ -490,6 +520,86 @@ def get_system_telemetry():
     except Exception:
         pass
     return " | ".join(telemetry)
+
+def load_cloud_config():
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    conf = {
+        "base_url": os.getenv("OMNIROUTE_URL", "http://localhost:20128/v1"),
+        "api_key": os.getenv("OPENROUTER_API_KEY", "sk-omniroute"),
+        "model": "deepseek/deepseek-chat"
+    }
+    if os.path.exists(CLOUD_CONF_PATH):
+        try:
+            with open(CLOUD_CONF_PATH, 'r') as f:
+                conf.update(json.load(f))
+        except Exception:
+            pass
+    return conf
+
+def save_cloud_config(conf):
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    try:
+        with open(CLOUD_CONF_PATH, 'w') as f:
+            json.dump(conf, f, indent=2)
+    except Exception:
+        pass
+
+def query_openviking(query, timeout=2.0):
+    if not query or len(query.strip()) < 4:
+        return ""
+    ov_bin = shutil.which("ov") or "/usr/local/bin/ov"
+    if os.path.exists(ov_bin):
+        try:
+            proc = subprocess.run(
+                [ov_bin, "find", query],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                clean = proc.stdout.strip()
+                return clean[:600] + ("..." if len(clean) > 600 else "")
+        except Exception:
+            pass
+    if os.path.exists(MEMORY_FALLBACK_PATH):
+        try:
+            with open(MEMORY_FALLBACK_PATH, 'r') as f:
+                memories = json.load(f)
+            words = set(re.findall(r'\w+', query.lower()))
+            matches = [m for m in memories if words & set(re.findall(r'\w+', m.lower()))]
+            if matches:
+                return "\n".join(matches[-2:])
+        except Exception:
+            pass
+    return ""
+
+def remember_fact(fact):
+    fact = fact.strip()
+    if not fact:
+        return False
+    ov_bin = shutil.which("ov") or "/usr/local/bin/ov"
+    if os.path.exists(ov_bin):
+        try:
+            subprocess.run([ov_bin, "add", fact], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.5)
+        except Exception:
+            pass
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    memories = []
+    if os.path.exists(MEMORY_FALLBACK_PATH):
+        try:
+            with open(MEMORY_FALLBACK_PATH, 'r') as f:
+                memories = json.load(f)
+        except Exception:
+            memories = []
+    if fact not in memories:
+        memories.append(fact)
+        if len(memories) > 200:
+            memories = memories[-200:]
+        try:
+            with open(MEMORY_FALLBACK_PATH, 'w') as f:
+                json.dump(memories, f, indent=2)
+            return True
+        except Exception:
+            pass
+    return True
 
 def execute_tool(action_type, payload):
     if action_type == "EXEC":
@@ -543,9 +653,55 @@ def execute_tool(action_type, payload):
 
     return "Unknown tool action."
 
-def call_local_model(messages, max_tokens=384):
+def call_model(messages, max_tokens=384):
+    global current_engine
+    if current_engine == "cloud":
+        conf = load_cloud_config()
+        url = conf.get("base_url", "http://localhost:20128/v1").rstrip('/') + "/chat/completions"
+        api_key = conf.get("api_key", "sk-omniroute")
+        model = conf.get("model", "deepseek/deepseek-chat")
+
+        payload = json.dumps({
+            "model": model,
+            "messages": messages,
+            "temperature": 0.5,
+            "max_tokens": max_tokens,
+            "stream": True
+        }).encode('utf-8')
+
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+        )
+
+        try:
+            collected = []
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                for line in resp:
+                    line = line.decode('utf-8').strip()
+                    if not line or not line.startswith("data: "):
+                        continue
+                    data_str = line[6:]
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                        delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                        if delta:
+                            sys.stdout.write(delta)
+                            sys.stdout.flush()
+                            collected.append(delta)
+                    except json.JSONDecodeError:
+                        pass
+            print()
+            return "".join(collected)
+        except Exception as e:
+            print(f"\n{YELLOW}[!] OmniRoute/Cloud endpoint error ({e}). Falling back to local neural engine...{RESET}")
+
+    # Fallback / Local Model (llama-server)
     payload = json.dumps({
-        "model": "qwen2.5-coder-1.5b-instruct",
+        "model": "default",
         "messages": messages,
         "temperature": 0.5,
         "max_tokens": max_tokens,
@@ -562,42 +718,47 @@ def call_local_model(messages, max_tokens=384):
     with urllib.request.urlopen(req, timeout=60) as resp:
         for line in resp:
             line = line.decode('utf-8').strip()
-            if not line:
+            if not line or not line.startswith("data: "):
                 continue
-            if line.startswith("data: "):
-                data_str = line[6:]
-                if data_str == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(data_str)
-                    delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                    if delta:
-                        sys.stdout.write(delta)
-                        sys.stdout.flush()
-                        collected.append(delta)
-                except json.JSONDecodeError:
-                    pass
+            data_str = line[6:]
+            if data_str == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_str)
+                delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                if delta:
+                    sys.stdout.write(delta)
+                    sys.stdout.flush()
+                    collected.append(delta)
+            except json.JSONDecodeError:
+                pass
     print()
     return "".join(collected)
 
-def run_agent_loop(initial_prompt=None, initial_mic=False):
-    global VOICE_ENABLED, mic_requested
+def print_banner():
+    p = PERSONAS.get(current_mode, PERSONAS["general"])
+    col = p["color"]
     os.system('clear')
-    print(f"{CYAN}{BOLD}=========================================================={RESET}")
-    print(f"{CYAN}{BOLD}        REVENANT OS - AUTONOMOUS FIELD AGENT CORE         {RESET}")
-    print(f"{CYAN}{BOLD}=========================================================={RESET}")
+    print(f"{col}{BOLD}=========================================================={RESET}")
+    print(f"{col}{BOLD}    REVENANT OS - AUTONOMOUS FIELD AGENT ({p['name'].upper()})   {RESET}")
+    print(f"{col}{BOLD}=========================================================={RESET}")
     telem = get_system_telemetry()
     if telem:
         print(f"{DIM}{telem}{RESET}")
-    print(f"{DIM}Commands: /mic (voice input) | /voice (toggle speech) | /sys | /clear | exit{RESET}")
+    eng_str = f"{GREEN}Local 3B (Offline){RESET}" if current_engine == "local" else f"{CYAN}OmniRoute / Cloud{RESET}"
+    print(f"{DIM}Engine: [{eng_str}{DIM}] | Memory: [{GREEN}OpenViking Active{RESET}{DIM}] | Mode: [{col}{p['name']}{RESET}{DIM}]{RESET}")
+    print(f"{DIM}Commands: /mechanic | /electronics | /sysadmin | /general | /cloud | /local | /remember | /recall{RESET}")
     print(f"{CYAN}Hotkeys:  Press <Super>+M anytime to speak directly into this window.{RESET}\n")
 
+def run_agent_loop(initial_prompt=None, initial_mic=False):
+    global VOICE_ENABLED, mic_requested, current_mode, current_engine
+    print_banner()
+
     history = [
-        {"role": "system", "content": SYSTEM_PROMPT}
+        {"role": "system", "content": PERSONAS[current_mode]["prompt"]}
     ]
 
     pending_user_input = initial_prompt
-
     if initial_mic:
         handle_mic_input()
 
@@ -606,12 +767,15 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
             mic_requested = False
             handle_mic_input()
 
+        p = PERSONAS.get(current_mode, PERSONAS["general"])
+        col = p["color"]
+
         if pending_user_input:
             user_input = pending_user_input
             pending_user_input = None
         else:
             try:
-                user_input = input(f"{GREEN}{BOLD}revenant ❯ {RESET}").strip()
+                user_input = input(f"{col}{BOLD}{current_mode} ❯ {RESET}").strip()
             except (VoiceTrigger, InterruptedError):
                 mic_requested = False
                 handle_mic_input()
@@ -627,35 +791,139 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
         if not user_input:
             continue
 
-        if user_input.lower() in ('exit', 'quit', ':q'):
+        cmd_lower = user_input.lower()
+        if cmd_lower in ('exit', 'quit', ':q'):
             print(f"{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
             break
-        elif user_input.lower() in ('/mic', '/talk', '/listen'):
+
+        # Persona / Mode switching
+        if cmd_lower in ('/mechanic', '/mech'):
+            current_mode = "mechanic"
+            history[0] = {"role": "system", "content": PERSONAS["mechanic"]["prompt"]}
+            print(f"\n{YELLOW}[✓] Switched to Motor Mechanic Field Specialist mode.{RESET}")
+            print(f"{DIM}Automotive diagnostics, DTC OBD-II, CAN bus & engine repair loaded.{RESET}\n")
+            continue
+        elif cmd_lower in ('/electronics', '/elec'):
+            current_mode = "electronics"
+            history[0] = {"role": "system", "content": PERSONAS["electronics"]["prompt"]}
+            print(f"\n{MAGENTA}[✓] Switched to Electronics Specialist mode.{RESET}")
+            print(f"{DIM}Circuit board diagnostics, multimeter test points & microcontrollers loaded.{RESET}\n")
+            continue
+        elif cmd_lower in ('/sysadmin', '/sys'):
+            current_mode = "sysadmin"
+            history[0] = {"role": "system", "content": PERSONAS["sysadmin"]["prompt"]}
+            print(f"\n{GREEN}[✓] Switched to Field Linux Systems Administrator mode.{RESET}")
+            print(f"{DIM}System recovery, network analysis, disk repair & serial comms loaded.{RESET}\n")
+            continue
+        elif cmd_lower in ('/general', '/coder', '/ai'):
+            current_mode = "general"
+            history[0] = {"role": "system", "content": PERSONAS["general"]["prompt"]}
+            print(f"\n{CYAN}[✓] Switched to General Field Assistant mode.{RESET}\n")
+            continue
+        elif cmd_lower.startswith('/mode '):
+            target = cmd_lower.split('/mode ', 1)[1].strip()
+            if target in PERSONAS:
+                current_mode = target
+                history[0] = {"role": "system", "content": PERSONAS[target]["prompt"]}
+                print(f"\n{PERSONAS[target]['color']}[✓] Switched to {PERSONAS[target]['name']} mode.{RESET}\n")
+            else:
+                print(f"{RED}[!] Unknown mode: {target}. Available: general, mechanic, electronics, sysadmin{RESET}\n")
+            continue
+
+        # Engine switching: OmniRoute / Cloud vs Local
+        elif cmd_lower in ('/cloud', '/omniroute'):
+            current_engine = "cloud"
+            conf = load_cloud_config()
+            print(f"\n{CYAN}[✓] Switched to OmniRoute / Cloud Engine.{RESET}")
+            print(f"{DIM}Endpoint: {conf['base_url']} | Model: {conf['model']}{RESET}")
+            print(f"{DIM}(Type /local to return to offline CPU or /cloud config to edit settings){RESET}\n")
+            continue
+        elif cmd_lower.startswith('/cloud config') or cmd_lower.startswith('/cloud setup'):
+            conf = load_cloud_config()
+            print(f"\n{CYAN}{BOLD}--- OmniRoute / Cloud Settings ---{RESET}")
+            new_url = input(f"Base URL [{conf['base_url']}]: ").strip()
+            if new_url:
+                conf['base_url'] = new_url
+            new_key = input(f"API Key (or Enter for default): ").strip()
+            if new_key:
+                conf['api_key'] = new_key
+            new_model = input(f"Model [{conf['model']}]: ").strip()
+            if new_model:
+                conf['model'] = new_model
+            save_cloud_config(conf)
+            print(f"{GREEN}[✓] OmniRoute / Cloud configuration updated and saved.{RESET}\n")
+            continue
+        elif cmd_lower == '/local':
+            current_engine = "local"
+            print(f"\n{GREEN}[✓] Switched to Offline Local Neural Engine (Qwen 2.5 Coder 3B).{RESET}\n")
+            continue
+
+        # Memory commands
+        elif cmd_lower.startswith('/remember '):
+            fact = user_input[10:].strip()
+            if remember_fact(fact):
+                print(f"{GREEN}[✓] Saved to OpenViking memory:{RESET} \"{fact}\"\n")
+            else:
+                print(f"{RED}[!] Could not save memory.{RESET}\n")
+            continue
+        elif cmd_lower.startswith('/recall '):
+            term = user_input[8:].strip()
+            recalled = query_openviking(term)
+            if recalled:
+                print(f"\n{GREEN}{BOLD}Recalled Memory for '{term}':{RESET}\n{recalled}\n")
+            else:
+                print(f"\n{YELLOW}[No memories found matching '{term}']{RESET}\n")
+            continue
+
+        # Utility commands
+        elif cmd_lower in ('/mic', '/talk', '/listen'):
             handle_mic_input()
             continue
-        elif user_input == '/clear':
-            history = [{"role": "system", "content": SYSTEM_PROMPT}]
-            print(f"{GREEN}[✓] Conversation memory cleared.{RESET}\n")
+        elif cmd_lower == '/clear':
+            history = [{"role": "system", "content": PERSONAS[current_mode]["prompt"]}]
+            print(f"{GREEN}[✓] Conversation context reset.{RESET}\n")
             continue
-        elif user_input == '/voice':
+        elif cmd_lower == '/voice':
             VOICE_ENABLED = not VOICE_ENABLED
             state = "ENABLED" if VOICE_ENABLED else "DISABLED"
             print(f"{CYAN}[*] Voice speech synthesis is now {state}.{RESET}\n")
             continue
-        elif user_input == '/sys':
+        elif cmd_lower in ('/sysinfo', '/hw'):
             print(f"\n{CYAN}{BOLD}Toughbook Hardware Diagnostics:{RESET}")
             subprocess.run("uname -a; uptime; free -h; df -h /; sensors 2>/dev/null || true", shell=True)
             print()
             continue
+        elif cmd_lower in ('/help', '/?'):
+            print(f"\n{CYAN}{BOLD}Revenant Field Agent Commands:{RESET}")
+            print(f"  {BOLD}/mechanic{RESET}    Switch to Automotive OBD-II DTC & CAN Bus mode")
+            print(f"  {BOLD}/electronics{RESET} Switch to Circuit Board, Multimeter & Microcontroller mode")
+            print(f"  {BOLD}/sysadmin{RESET}    Switch to Linux Recovery, Network & Serial Comms mode")
+            print(f"  {BOLD}/general{RESET}     Switch to General Computing & Scripting mode")
+            print(f"  {BOLD}/cloud{RESET}       Toggle OmniRoute / Cloud API (free APIs or OpenRouter)")
+            print(f"  {BOLD}/local{RESET}       Toggle 100% Offline Local 3B Model")
+            print(f"  {BOLD}/remember <text>{RESET} Save knowledge/facts into OpenViking memory")
+            print(f"  {BOLD}/recall <query>{RESET}  Search OpenViking memory database")
+            print(f"  {BOLD}/mic{RESET}         Record 5s query from Toughbook microphone")
+            print(f"  {BOLD}/voice{RESET}       Toggle Piper speech synthesis")
+            print(f"  {BOLD}/clear{RESET}       Clear conversation context")
+            print(f"  {BOLD}exit{RESET}         Exit agent\n")
+            continue
 
-        history.append({"role": "user", "content": user_input})
+        # Query OpenViking for relevant memory context
+        mem_context = query_openviking(user_input)
+        if mem_context:
+            augmented = f"{user_input}\n\n[OpenViking Relevant Memory Context:\n{mem_context}]"
+        else:
+            augmented = user_input
 
-        if len(history) > 10:
-            history = [history[0]] + history[-8:]
+        history.append({"role": "user", "content": augmented})
+        if len(history) > 12:
+            history = [history[0]] + history[-10:]
 
-        print(f"\n{CYAN}[Revenant Agent Thinking...]{RESET}")
+        eng_label = "Local 3B" if current_engine == "local" else "OmniRoute/Cloud"
+        print(f"\n{CYAN}[Revenant Agent Thinking ({eng_label})...]{RESET}")
         try:
-            response = call_local_model(history)
+            response = call_model(history)
             history.append({"role": "assistant", "content": response})
             speak_text(response)
 
@@ -664,27 +932,41 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
                 result = execute_tool(action_type, payload)
                 history.append({"role": "user", "content": f"Tool execution result:\n{result}"})
                 print(f"\n{CYAN}[Revenant Agent Analyzing Result...]{RESET}")
-                followup = call_local_model(history, max_tokens=256)
+                followup = call_model(history, max_tokens=256)
                 history.append({"role": "assistant", "content": followup})
                 speak_text(followup)
 
             print()
 
         except urllib.error.URLError as e:
-            print(f"\n{RED}[!] Cannot connect to local inference server: {e}{RESET}")
-            print(f"{YELLOW}Ensure llama-server is active: sudo systemctl restart llama-server{RESET}\n")
+            print(f"\n{RED}[!] Cannot connect to inference engine: {e}{RESET}")
+            print(f"{YELLOW}Ensure llama-server or OmniRoute is active: sudo systemctl restart llama-server{RESET}\n")
         except Exception as e:
             print(f"\n{RED}[!] Agent Error: {e}{RESET}\n")
 
 if __name__ == '__main__':
     initial = None
     start_mic = False
-    if len(sys.argv) > 1:
-        if sys.argv[1] in ('--mic', '-m', '--voice'):
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ('--mic', '-mic', '--voice'):
             VOICE_ENABLED = True
             start_mic = True
+        elif arg in ('--mode', '-m') and i + 1 < len(args):
+            i += 1
+            if args[i] in PERSONAS:
+                current_mode = args[i]
+        elif arg in ('--cloud', '-c'):
+            current_engine = "cloud"
+        elif arg in ('--local', '-l'):
+            current_engine = "local"
         else:
-            initial = " ".join(sys.argv[1:])
+            initial = " ".join(args[i:])
+            break
+        i += 1
+
     run_agent_loop(initial_prompt=initial, initial_mic=start_mic)
 AGENT_EOF
 chmod +x "$PATCH_ROOT/usr/local/bin/revenant-agent"
@@ -702,7 +984,7 @@ offline: true
 INTERP_CFG
 done
 
-echo "[*] Installing Node.js v22 (v22.23.2) runtime and Pi Coding Agent..."
+echo "[*] Installing Node.js v22 (v22.23.2) standalone runtime..."
 NODE_TAR="$CACHE_DIR/node-v22.23.2-linux-x64.tar.xz"
 if [ ! -f "$NODE_TAR" ] && [ -f "$SCRIPT_DIR/node-v22.23.2-linux-x64.tar.xz" ]; then
   NODE_TAR="$SCRIPT_DIR/node-v22.23.2-linux-x64.tar.xz"
@@ -720,16 +1002,13 @@ if [ -f "$NODE_TAR" ]; then
   ln -sf /opt/node/bin/npx "$PATCH_ROOT/usr/local/bin/npx"
 fi
 
-# Install Pi Coding Agent globally into Node runtime
-if [ -x "$PATCH_ROOT/opt/node/bin/npm" ]; then
-  echo "[*] Installing @earendil-works/pi-coding-agent into system runtime..."
-  chroot "$PATCH_ROOT" /opt/node/bin/npm install -g --force @earendil-works/pi-coding-agent 2>/dev/null || true
-fi
-
-# Purge any legacy OpenCode binaries, wrappers, and configurations
+# Purge any legacy OpenCode and Pi Agent binaries, wrappers, and configurations
 rm -f "$PATCH_ROOT/usr/local/bin/opencode" "$PATCH_ROOT/usr/local/bin/revenant-opencode" "$PATCH_ROOT/usr/share/applications/opencode.desktop"
+rm -f "$PATCH_ROOT/usr/local/bin/pi" "$PATCH_ROOT/usr/local/bin/pi-agent" "$PATCH_ROOT/usr/local/bin/pi-mechanic" "$PATCH_ROOT/usr/local/bin/pi-electronics" "$PATCH_ROOT/usr/local/bin/pi-sysadmin"
+rm -f "$PATCH_ROOT/usr/share/applications/pi"*.desktop
 rm -rf "$PATCH_ROOT/etc/skel/.config/opencode" "$PATCH_ROOT/home/user/.config/opencode" "$PATCH_ROOT/home/revenant/.config/opencode"
 rm -rf "$PATCH_ROOT/etc/skel/.local/state/opencode" "$PATCH_ROOT/home/user/.local/state/opencode" "$PATCH_ROOT/home/revenant/.local/state/opencode"
+rm -rf "$PATCH_ROOT/etc/skel/.pi" "$PATCH_ROOT/home/user/.pi" "$PATCH_ROOT/home/revenant/.pi"
 
 # System-wide prompt repository for offline field personas
 mkdir -p "$PATCH_ROOT/usr/share/revenant/prompts"
@@ -767,264 +1046,45 @@ Provide exact, reliable terminal commands and concise technical explanations.
 Focus on: $ARGUMENTS
 PROMPT_SYSADMIN_GLOBAL_EOF
 
-# Pre-seed Pi Agent configuration and specialized field prompts for all user profiles
-for pi_base in "$PATCH_ROOT/etc/skel/.pi/agent" "$PATCH_ROOT/home/user/.pi/agent" "$PATCH_ROOT/home/revenant/.pi/agent"; do
-  mkdir -p "$pi_base/prompts"
+## Create CLI quick-launch aliases pointing to Revenant Agent modes
+cat << 'WRAP_MECH' > "$PATCH_ROOT/usr/local/bin/ai-mechanic"
+#!/bin/sh
+exec /usr/local/bin/revenant-agent --mode mechanic "$@"
+WRAP_MECH
+chmod +x "$PATCH_ROOT/usr/local/bin/ai-mechanic"
 
-  # 1. Local llama-server provider configuration + OpenRouter cloud API option (models.json)
-  cat << 'PI_MODELS_EOF' > "$pi_base/models.json"
-{
-  "providers": {
-    "revenant-local": {
-      "baseUrl": "http://127.0.0.1:8080/v1",
-      "api": "openai-completions",
-      "apiKey": "sk-local-revenant",
-      "compat": {
-        "supportsDeveloperRole": false,
-        "supportsReasoningEffort": false
-      },
-      "models": [
-        {
-          "id": "qwen2.5-coder-3b-instruct",
-          "name": "Qwen 2.5 Coder 3B (Local Toughbook)",
-          "contextWindow": 4096,
-          "maxTokens": 512
-        },
-        {
-          "id": "qwen2.5-coder-1.5b-instruct",
-          "name": "Qwen 2.5 Coder 1.5B (Fallback Local)",
-          "contextWindow": 4096,
-          "maxTokens": 512
-        }
-      ]
-    },
-    "openrouter": {
-      "baseUrl": "https://openrouter.ai/api/v1",
-      "api": "openai-completions",
-      "apiKey": "env:OPENROUTER_API_KEY",
-      "models": [
-        {
-          "id": "deepseek/deepseek-chat",
-          "name": "DeepSeek V3 (OpenRouter Cloud API)",
-          "contextWindow": 64000,
-          "maxTokens": 2048
-        },
-        {
-          "id": "anthropic/claude-3.5-sonnet",
-          "name": "Claude 3.5 Sonnet (OpenRouter Cloud API)",
-          "contextWindow": 128000,
-          "maxTokens": 4096
-        }
-      ]
-    }
-  }
-}
-PI_MODELS_EOF
+cat << 'WRAP_ELEC' > "$PATCH_ROOT/usr/local/bin/ai-electronics"
+#!/bin/sh
+exec /usr/local/bin/revenant-agent --mode electronics "$@"
+WRAP_ELEC
+chmod +x "$PATCH_ROOT/usr/local/bin/ai-electronics"
 
-  # 2. Default model & provider settings (settings.json)
-  cat << 'PI_SETTINGS_EOF' > "$pi_base/settings.json"
-{
-  "defaultProvider": "revenant-local",
-  "defaultModel": "qwen2.5-coder-3b-instruct"
-}
-PI_SETTINGS_EOF
+cat << 'WRAP_SYS' > "$PATCH_ROOT/usr/local/bin/ai-sysadmin"
+#!/bin/sh
+exec /usr/local/bin/revenant-agent --mode sysadmin "$@"
+WRAP_SYS
+chmod +x "$PATCH_ROOT/usr/local/bin/ai-sysadmin"
 
-  # Copy prompts into profile template
-  cp -f "$PATCH_ROOT/usr/share/revenant/prompts/"*.md "$pi_base/prompts/" 2>/dev/null || true
-done
-
-# Clean any existing pi wrapper/link to prevent overwriting opt/node/bin/pi
-rm -f "$PATCH_ROOT/usr/local/bin/pi" "$PATCH_ROOT/usr/local/bin/pi-agent"
-
-# Wrapper script for pi ensuring Node runtime is on PATH, offline mode is enforced, and llama-server is healthy
-cat << 'PI_WRAPPER_EOF' > "$PATCH_ROOT/usr/local/bin/pi"
-#!/usr/bin/env bash
-export PATH="/opt/node/bin:$PATH"
-export PI_OFFLINE=1
-export PI_TELEMETRY=0
-
-CYAN="\033[1;36m"
-GREEN="\033[1;32m"
-YELLOW="\033[1;33m"
-RED="\033[1;31m"
-RESET="\033[0m"
-
-# Print instant startup banner so the terminal is never blank
-echo -e "${CYAN}=======================================================${RESET}"
-echo -e "${GREEN}      Revenant OS - Local Agentic Environment          ${RESET}"
-echo -e "${CYAN}=======================================================${RESET}"
-
-# Verify local llama-server health on 127.0.0.1:8080
-if ! curl -s -f -m 1 "http://127.0.0.1:8080/health" >/dev/null 2>&1 && ! curl -s -f -m 1 "http://127.0.0.1:8080/v1/models" >/dev/null 2>&1; then
-  echo -e "${YELLOW}[*] Starting local neural inference engine (llama-server)...${RESET}"
-  systemctl start llama-server.service 2>/dev/null || sudo systemctl start llama-server.service 2>/dev/null || true
-
-  for i in $(seq 1 8); do
-    if curl -s -f -m 1 "http://127.0.0.1:8080/health" >/dev/null 2>&1 || curl -s -f -m 1 "http://127.0.0.1:8080/v1/models" >/dev/null 2>&1; then
-      echo -e "${GREEN}[✓] Neural inference engine online.${RESET}"
-      break
-    fi
-    echo -n "."
-    sleep 1
-  done
-  echo ""
-fi
-
-# Auto-detect whether 3B or 1.5B is available locally
-LOCAL_MODEL="qwen2.5-coder-3b-instruct"
-if [ ! -f /opt/models/qwen2.5-coder-3b-instruct-q4_k_m.gguf ] && [ -f /opt/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf ]; then
-  LOCAL_MODEL="qwen2.5-coder-1.5b-instruct"
-fi
-
-# Handle Cloud API override if configured by user
-ACTIVE_PROVIDER="revenant-local"
-ACTIVE_MODEL="$LOCAL_MODEL"
-OFFLINE_ARGS=(--offline)
-
-if [ -n "$OPENROUTER_API_KEY" ] && [ "$PI_PROVIDER" = "openrouter" ]; then
-  ACTIVE_PROVIDER="openrouter"
-  ACTIVE_MODEL="deepseek/deepseek-chat"
-  OFFLINE_ARGS=()
-  unset PI_OFFLINE
-fi
-
-PI_CLI="/opt/node/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
-
-if [ -f "$PI_CLI" ]; then
-  exec /opt/node/bin/node "$PI_CLI" "${OFFLINE_ARGS[@]}" --provider "$ACTIVE_PROVIDER" --model "$ACTIVE_MODEL" --no-skills --no-context-files "$@"
-elif [ -x /opt/node/bin/pi ] && ! grep -q "PI_WRAPPER" /opt/node/bin/pi 2>/dev/null; then
-  exec /opt/node/bin/pi "${OFFLINE_ARGS[@]}" --provider "$ACTIVE_PROVIDER" --model "$ACTIVE_MODEL" --no-skills --no-context-files "$@"
-else
-  echo -e "${RED}[!] Pi Agent CLI bundle not found in /opt/node.${RESET}"
-  exec /opt/node/bin/node "$PI_CLI" "${OFFLINE_ARGS[@]}" --provider "$ACTIVE_PROVIDER" --model "$ACTIVE_MODEL" --no-skills --no-context-files "$@"
-fi
-PI_WRAPPER_EOF
-chmod +x "$PATCH_ROOT/usr/local/bin/pi"
-
-# Create specialized persona wrappers
-cat << 'WRAPPER_MECH_EOF' > "$PATCH_ROOT/usr/local/bin/pi-mechanic"
-#!/usr/bin/env bash
-PROMPT_FILE="/usr/share/revenant/prompts/mechanic.md"
-[ -f "$HOME/.pi/agent/prompts/mechanic.md" ] && PROMPT_FILE="$HOME/.pi/agent/prompts/mechanic.md"
-
-PROMPT_TEXT=""
-if [ -f "$PROMPT_FILE" ]; then
-  PROMPT_TEXT=$(grep -v '^---' "$PROMPT_FILE" | grep -v '^description:' | grep -v '^argument-hint:' | sed '/./,$!d')
-fi
-
-echo -e "\033[1;36m=======================================================\033[0m"
-echo -e "\033[1;33m       Pi Motor Mechanic - Field Diagnostic Agent      \033[0m"
-echo -e "\033[1;36m=======================================================\033[0m"
-echo -e "Specialization: Automotive DTC (OBD-II), CAN Bus & Engine Repair"
-echo ""
-
-if [ $# -gt 0 ]; then
-  exec /usr/local/bin/pi --append-system-prompt "$PROMPT_TEXT" "$@"
-else
-  exec /usr/local/bin/pi --append-system-prompt "$PROMPT_TEXT"
-fi
-WRAPPER_MECH_EOF
-chmod +x "$PATCH_ROOT/usr/local/bin/pi-mechanic"
-
-cat << 'WRAPPER_ELEC_EOF' > "$PATCH_ROOT/usr/local/bin/pi-electronics"
-#!/usr/bin/env bash
-PROMPT_FILE="/usr/share/revenant/prompts/electronics.md"
-[ -f "$HOME/.pi/agent/prompts/electronics.md" ] && PROMPT_FILE="$HOME/.pi/agent/prompts/electronics.md"
-
-PROMPT_TEXT=""
-if [ -f "$PROMPT_FILE" ]; then
-  PROMPT_TEXT=$(grep -v '^---' "$PROMPT_FILE" | grep -v '^description:' | grep -v '^argument-hint:' | sed '/./,$!d')
-fi
-
-echo -e "\033[1;36m=======================================================\033[0m"
-echo -e "\033[1;35m    Pi Electronics Specialist - Component Diagnostics  \033[0m"
-echo -e "\033[1;36m=======================================================\033[0m"
-echo -e "Specialization: Circuit Boards, Multimeter Test Points & Microcontrollers"
-echo ""
-
-if [ $# -gt 0 ]; then
-  exec /usr/local/bin/pi --append-system-prompt "$PROMPT_TEXT" "$@"
-else
-  exec /usr/local/bin/pi --append-system-prompt "$PROMPT_TEXT"
-fi
-WRAPPER_ELEC_EOF
-chmod +x "$PATCH_ROOT/usr/local/bin/pi-electronics"
-
-cat << 'WRAPPER_SYS_EOF' > "$PATCH_ROOT/usr/local/bin/pi-sysadmin"
-#!/usr/bin/env bash
-PROMPT_FILE="/usr/share/revenant/prompts/sysadmin.md"
-[ -f "$HOME/.pi/agent/prompts/sysadmin.md" ] && PROMPT_FILE="$HOME/.pi/agent/prompts/sysadmin.md"
-
-PROMPT_TEXT=""
-if [ -f "$PROMPT_FILE" ]; then
-  PROMPT_TEXT=$(grep -v '^---' "$PROMPT_FILE" | grep -v '^description:' | grep -v '^argument-hint:' | sed '/./,$!d')
-fi
-
-echo -e "\033[1;36m=======================================================\033[0m"
-echo -e "\033[1;32m      Pi System Admin - Field Linux Systems Recovery   \033[0m"
-echo -e "\033[1;36m=======================================================\033[0m"
-echo -e "Specialization: Network Troubleshooting, Serial Interfaces & System Recovery"
-echo ""
-
-if [ $# -gt 0 ]; then
-  exec /usr/local/bin/pi --append-system-prompt "$PROMPT_TEXT" "$@"
-else
-  exec /usr/local/bin/pi --append-system-prompt "$PROMPT_TEXT"
-fi
-WRAPPER_SYS_EOF
-chmod +x "$PATCH_ROOT/usr/local/bin/pi-sysadmin"
-
-ln -sf /usr/local/bin/pi "$PATCH_ROOT/usr/local/bin/pi-agent" 2>/dev/null || true
-
-# Create Desktop Launchers
+# Single polished desktop launcher: Revenant Field Agent
 mkdir -p "$PATCH_ROOT/usr/share/applications"
-cat << 'PI_DESK_EOF' > "$PATCH_ROOT/usr/share/applications/pi.desktop"
+cat << 'AGENT_DESK_EOF' > "$PATCH_ROOT/usr/share/applications/revenant-agent.desktop"
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Pi Field Agent
-Comment=Autonomous AI Coding & Field Agent
-Exec=xfce4-terminal --title="Pi Field Agent" --geometry=110x34 -e "/usr/local/bin/pi"
+Name=Revenant Field Agent
+Comment=Autonomous AI Field Agent (Mechanic, Electronics, SysAdmin, Cloud & Memory)
+Exec=xfce4-terminal --title="Revenant Field Agent" --geometry=105x32 -e "/usr/local/bin/revenant-agent"
 Icon=utilities-terminal
 Terminal=false
-Categories=Development;System;
-PI_DESK_EOF
-
-cat << 'MECH_DESK_EOF' > "$PATCH_ROOT/usr/share/applications/pi-mechanic.desktop"
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=Pi Motor Mechanic
-Comment=Automotive & OBD-II Field Diagnostic Specialist
-Exec=xfce4-terminal --title="Pi Motor Mechanic" --geometry=110x34 -e "/usr/local/bin/pi-mechanic"
-Icon=preferences-system
-Terminal=false
 Categories=Development;System;Utility;
-MECH_DESK_EOF
+AGENT_DESK_EOF
 
-cat << 'ELEC_DESK_EOF' > "$PATCH_ROOT/usr/share/applications/pi-electronics.desktop"
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=Pi Electronics Specialist
-Comment=Circuit Board & Component Diagnostic Specialist
-Exec=xfce4-terminal --title="Pi Electronics Specialist" --geometry=110x34 -e "/usr/local/bin/pi-electronics"
-Icon=applications-engineering
-Terminal=false
-Categories=Development;System;Utility;
-ELEC_DESK_EOF
-
-cat << 'SYS_DESK_EOF' > "$PATCH_ROOT/usr/share/applications/pi-sysadmin.desktop"
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=Pi System Admin
-Comment=Linux Field Recovery & Systems Administration
-Exec=xfce4-terminal --title="Pi System Admin" --geometry=110x34 -e "/usr/local/bin/pi-sysadmin"
-Icon=system-run
-Terminal=false
-Categories=Development;System;Utility;
-SYS_DESK_EOF
+for ddir in "$PATCH_ROOT/etc/skel/Desktop" "$PATCH_ROOT/root/Desktop" "$PATCH_ROOT/home/user/Desktop" "$PATCH_ROOT/home/revenant/Desktop"; do
+  mkdir -p "$ddir"
+  rm -f "$ddir/"pi*.desktop "$ddir/"*opencode*.desktop 2>/dev/null || true
+  cp -f "$PATCH_ROOT/usr/share/applications/revenant-agent.desktop" "$ddir/Revenant_Agent.desktop" 2>/dev/null || true
+  chmod +x "$ddir/Revenant_Agent.desktop" 2>/dev/null || true
+done
 
 # Install Agent Reach and Curated Field Skills
 echo "[*] Installing Agent Reach and offline field engineering skills..."
@@ -1076,7 +1136,7 @@ else:
 print("\033[96m[Revenant Core: Local Qwen2.5 Thinking (Offline Toughbook CPU)...]\033[0m\n")
 
 payload = json.dumps({
-    "model": "qwen2.5-coder-1.5b-instruct",
+    "model": "default",
     "messages": [
         {"role": "system", "content": "You are the Revenant OS AI Assistant on a Panasonic Toughbook. Give clear, expert, concise Linux and computing answers."},
         {"role": "user", "content": prompt}
@@ -1522,14 +1582,16 @@ SHORTCUTS_EOF
   sed -i '/revenant-i3-help/d' "$u_home/.config/i3/config" 2>/dev/null || true
   sed -i '/Revenant OS Voice Assistant Hotkeys/d' "$u_home/.config/i3/config" 2>/dev/null || true
   sed -i '/Revenant OS Hotkeys & Quick Reference/d' "$u_home/.config/i3/config" 2>/dev/null || true
+  sed -i '/revenant-agent/d' "$u_home/.config/i3/config" 2>/dev/null || true
   cat << 'I3_HOTKEY' >> "$u_home/.config/i3/config"
 
 # Revenant OS Hotkeys & Quick Reference
 bindsym $mod+m exec --no-startup-id /usr/local/bin/revenant-voice
 bindsym Mod1+Control+m exec --no-startup-id /usr/local/bin/revenant-voice
-bindsym $mod+Shift+c exec --no-startup-id xfce4-terminal --title="Pi Field Agent" --geometry=110x34 -e "pi"
-bindsym $mod+Shift+m exec --no-startup-id xfce4-terminal --title="Pi Motor Mechanic" --geometry=110x34 -e "pi-mechanic"
-bindsym $mod+Shift+e exec --no-startup-id xfce4-terminal --title="Pi Electronics Specialist" --geometry=110x34 -e "pi-electronics"
+bindsym $mod+Shift+a exec --no-startup-id xfce4-terminal --title="Revenant Field Agent" --geometry=105x32 -e "revenant-agent"
+bindsym $mod+Shift+m exec --no-startup-id xfce4-terminal --title="Revenant Motor Mechanic" --geometry=105x32 -e "revenant-agent --mode mechanic"
+bindsym $mod+Shift+e exec --no-startup-id xfce4-terminal --title="Revenant Electronics Specialist" --geometry=105x32 -e "revenant-agent --mode electronics"
+bindsym $mod+Shift+s exec --no-startup-id xfce4-terminal --title="Revenant System Admin" --geometry=105x32 -e "revenant-agent --mode sysadmin"
 bindsym $mod+F1 exec --no-startup-id /usr/local/bin/revenant-i3-help
 I3_HOTKEY
 done
@@ -1640,7 +1702,7 @@ zenity --question --title="Confirm Installation" \
   --ok-label="Yes, Erase & Install" --cancel-label="Cancel" || exit 0
 
 LOG="/tmp/revenant_install.log"
-echo "=== Revenant OS 1.1 (Build 19.6) Installation Started ===" > "$LOG"
+echo "=== Revenant OS 1.1 (Build 19.7) Installation Started ===" > "$LOG"
 date >> "$LOG"
 
 (
@@ -1728,11 +1790,7 @@ if [ -d "/mnt/target/etc/skel/.config/open-interpreter" ]; then
   mkdir -p "/mnt/target/home/$NEW_USER/.config/open-interpreter"
   cp -a /mnt/target/etc/skel/.config/open-interpreter/* "/mnt/target/home/$NEW_USER/.config/open-interpreter/"
 fi
-if [ -d "/mnt/target/etc/skel/.pi" ]; then
-  mkdir -p "/mnt/target/home/$NEW_USER/.pi"
-  cp -a /mnt/target/etc/skel/.pi/* "/mnt/target/home/$NEW_USER/.pi/"
-fi
-chroot /mnt/target chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.config" "/home/$NEW_USER/.local" "/home/$NEW_USER/.pi" 2>/dev/null || true
+chroot /mnt/target chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.config" "/home/$NEW_USER/.local" 2>/dev/null || true
 
 # Ensure Desktop and AI shortcuts exist in installed user home
 mkdir -p "/mnt/target/home/$NEW_USER/Desktop"
@@ -1744,17 +1802,11 @@ if [ -f "/mnt/target/etc/skel/Desktop/Revenant_Agent.desktop" ]; then
   cp -a "/mnt/target/etc/skel/Desktop/Revenant_Agent.desktop" "/mnt/target/home/$NEW_USER/Desktop/"
   chmod +x "/mnt/target/home/$NEW_USER/Desktop/Revenant_Agent.desktop"
 fi
-for pdesk in pi.desktop pi-mechanic.desktop pi-electronics.desktop pi-sysadmin.desktop; do
-  if [ -f "/mnt/target/usr/share/applications/$pdesk" ]; then
-    cp -a "/mnt/target/usr/share/applications/$pdesk" "/mnt/target/home/$NEW_USER/Desktop/"
-    chmod +x "/mnt/target/home/$NEW_USER/Desktop/$pdesk"
-  fi
-done
-# Clean up any legacy session switch or opencode shortcuts from installed desktops
-rm -f "/mnt/target/home/$NEW_USER/Desktop/Switch_to_"*.desktop "/mnt/target/home/$NEW_USER/Desktop/switch-to-"*.desktop "/mnt/target/home/$NEW_USER/Desktop/"*opencode*.desktop "/mnt/target/home/$NEW_USER/Desktop/"*OpenCode*.desktop 2>/dev/null || true
-rm -f "/mnt/target/etc/skel/Desktop/Switch_to_"*.desktop "/mnt/target/etc/skel/Desktop/switch-to-"*.desktop "/mnt/target/etc/skel/Desktop/"*opencode*.desktop "/mnt/target/etc/skel/Desktop/"*OpenCode*.desktop 2>/dev/null || true
+# Clean up any legacy session switch, opencode, or pi shortcuts from installed desktops
+rm -f "/mnt/target/home/$NEW_USER/Desktop/Switch_to_"*.desktop "/mnt/target/home/$NEW_USER/Desktop/switch-to-"*.desktop "/mnt/target/home/$NEW_USER/Desktop/"*opencode*.desktop "/mnt/target/home/$NEW_USER/Desktop/"*OpenCode*.desktop "/mnt/target/home/$NEW_USER/Desktop/"pi*.desktop 2>/dev/null || true
+rm -f "/mnt/target/etc/skel/Desktop/Switch_to_"*.desktop "/mnt/target/etc/skel/Desktop/switch-to-"*.desktop "/mnt/target/etc/skel/Desktop/"*opencode*.desktop "/mnt/target/etc/skel/Desktop/"*OpenCode*.desktop "/mnt/target/etc/skel/Desktop/"pi*.desktop 2>/dev/null || true
 for ddir in /mnt/target/root/Desktop /mnt/target/home/*/Desktop; do
-  rm -f "$ddir/Switch_to_"*.desktop "$ddir/switch-to-"*.desktop "$ddir/"*opencode*.desktop "$ddir/"*OpenCode*.desktop 2>/dev/null || true
+  rm -f "$ddir/Switch_to_"*.desktop "$ddir/switch-to-"*.desktop "$ddir/"*opencode*.desktop "$ddir/"*OpenCode*.desktop "$ddir/"pi*.desktop 2>/dev/null || true
 done
 chroot /mnt/target chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/Desktop" 2>/dev/null || true
 
@@ -1765,14 +1817,16 @@ for i3_cfg in /mnt/target/etc/i3/config /mnt/target/etc/skel/.config/i3/config /
     sed -i '/revenant-i3-help/d' "$i3_cfg" 2>/dev/null || true
     sed -i '/Revenant OS Voice Assistant Hotkeys/d' "$i3_cfg" 2>/dev/null || true
     sed -i '/Revenant OS Hotkeys & Quick Reference/d' "$i3_cfg" 2>/dev/null || true
+    sed -i '/revenant-agent/d' "$i3_cfg" 2>/dev/null || true
     cat << 'I3_HOTKEY' >> "$i3_cfg"
 
 # Revenant OS Hotkeys & Quick Reference
 bindsym $mod+m exec --no-startup-id /usr/local/bin/revenant-voice
 bindsym Mod1+Control+m exec --no-startup-id /usr/local/bin/revenant-voice
-bindsym $mod+Shift+c exec --no-startup-id xfce4-terminal --title="Pi Field Agent" --geometry=110x34 -e "pi"
-bindsym $mod+Shift+m exec --no-startup-id xfce4-terminal --title="Pi Motor Mechanic" --geometry=110x34 -e "pi-mechanic"
-bindsym $mod+Shift+e exec --no-startup-id xfce4-terminal --title="Pi Electronics Specialist" --geometry=110x34 -e "pi-electronics"
+bindsym $mod+Shift+a exec --no-startup-id xfce4-terminal --title="Revenant Field Agent" --geometry=105x32 -e "revenant-agent"
+bindsym $mod+Shift+m exec --no-startup-id xfce4-terminal --title="Revenant Motor Mechanic" --geometry=105x32 -e "revenant-agent --mode mechanic"
+bindsym $mod+Shift+e exec --no-startup-id xfce4-terminal --title="Revenant Electronics Specialist" --geometry=105x32 -e "revenant-agent --mode electronics"
+bindsym $mod+Shift+s exec --no-startup-id xfce4-terminal --title="Revenant System Admin" --geometry=105x32 -e "revenant-agent --mode sysadmin"
 bindsym $mod+F1 exec --no-startup-id /usr/local/bin/revenant-i3-help
 I3_HOTKEY
   fi
@@ -2004,7 +2058,7 @@ insmod ext2
 set root='hd0,msdos1'
 search --no-floppy --fs-uuid --set=root $UUID
 
-menuentry "Revenant OS 1.1 (Build 19.6) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 19.7) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -2013,7 +2067,7 @@ menuentry "Revenant OS 1.1 (Build 19.6) - Agentic Linux" --class debian --class 
     initrd /boot/$INITRD
 }
 
-menuentry "Revenant OS 1.1 (Build 19.6) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 19.7) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -2037,11 +2091,11 @@ umount -l /mnt/target/dev 2>/dev/null || true
 umount -l /mnt/target 2>/dev/null || true
 
 echo "100"; echo "# Installation Complete!"
-) | zenity --progress --title="Installing Revenant OS 1.1 (Build 19.6)" --text="Starting installation..." --percentage=0 --auto-close
+) | zenity --progress --title="Installing Revenant OS 1.1 (Build 19.7)" --text="Starting installation..." --percentage=0 --auto-close
 
 if [ -f "$LOG" ] && grep -iq "Installing for i386-pc platform" "$LOG"; then
   zenity --info --title="Success" \
-    --text="<b>Revenant OS 1.1 (Build 19.6) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
+    --text="<b>Revenant OS 1.1 (Build 19.7) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
 else
   zenity --error --title="Error" \
     --text="An error occurred during installation. Check /tmp/revenant_install.log or the target drive."
@@ -2069,12 +2123,12 @@ if background_image /boot/grub/splash.png; then
   set color_highlight=cyan/black
 fi
 
-menuentry "Revenant OS 1.1 (Build 19.6) - Agentic Core (Offline Voice + Local LLM + Pi Agent)" {
+menuentry "Revenant OS 1.1 (Build 19.7) - Unified Field Agent (Offline Voice + Local 3B + OpenViking Memory)" {
     linux /live/vmlinuz boot=live components quiet splash
     initrd /live/initrd.img
 }
 
-menuentry "Revenant OS 1.1 (Build 19.6) (Safe Graphics / Failsafe)" {
+menuentry "Revenant OS 1.1 (Build 19.7) (Safe Graphics / Failsafe)" {
     linux /live/vmlinuz boot=live components nomodeset
     initrd /live/initrd.img
 }
@@ -2083,13 +2137,13 @@ EOF
 echo "[*] Packaging patched SquashFS (xz compression)..."
 mksquashfs "$PATCH_ROOT" "$WORKSPACE_DIR/image/live/filesystem.squashfs" -comp xz
 
-echo "[*] Building 1.1 Build 19.6 ISO with hybrid bootloader..."
-grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 19.6)"
+echo "[*] Building 1.1 Build 19.7 ISO with hybrid bootloader..."
+grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 19.7)"
 cp -f "$ISO_TARGET" "$ISO_ALIAS"
 
 echo "[*] Cleaning up workspace..."
 rm -rf "$WORKSPACE_DIR" "$PATCH_ROOT"
 
-echo "[*] Build Complete! Revenant OS 1.1 (Build 19.6) ISO ready at: $ISO_TARGET"
+echo "[*] Build Complete! Revenant OS 1.1 (Build 19.7) ISO ready at: $ISO_TARGET"
 ls -lh "$ISO_TARGET" "$ISO_ALIAS"
 

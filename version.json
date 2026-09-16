@@ -1,8 +1,8 @@
 {
   "os_name": "Revenant OS",
   "version": "1.1.0",
-  "build": "19.6",
-  "display": "Revenant OS 1.1 (Build 19.6 - Agentic 3B & Pi Performance Edition)",
+  "build": "19.7",
+  "display": "Revenant OS 1.1 (Build 19.7 - Unified Field Agent & Memory Edition)",
   "channel": "beta",
   "target_hardware": "Panasonic Toughbook CF-52 & Field Laptops",
   "release_date": "2026-09-16",
