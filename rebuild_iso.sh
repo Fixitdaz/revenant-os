@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="/var/tmp/toughbook_rebuild_1_1"
 PATCH_ROOT="/var/tmp/patch_root_1_1"
 ISO_SOURCE="$SCRIPT_DIR/revenant_os_toughbook_v15_5.iso"
-ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build20.1.iso"
+ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build20.2.iso"
 ISO_ALIAS="$SCRIPT_DIR/revenant_os_latest.iso"
 CACHE_DIR="/var/tmp/revenant_cache"
 
@@ -801,98 +801,136 @@ def execute_tool(action_type, payload):
 
     return "Unknown tool action."
 
+def get_cloud_candidates(base_url, primary_model):
+    candidates = [primary_model] if primary_model else ["auto"]
+    try:
+        req = urllib.request.Request(f"{base_url}/models")
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            for m in data.get("data", []):
+                mid = m.get("id") if isinstance(m, dict) else str(m)
+                if mid and mid not in candidates:
+                    candidates.append(mid)
+    except Exception:
+        pass
+
+    default_fallbacks = [
+        "auto",
+        "pollinations/gpt-4o",
+        "pollinations/claude-3-5-sonnet",
+        "opencode/qwen-2.5-coder-32b",
+        "duckduckgo-web/claude-3-haiku",
+        "duckduckgo-web/gpt-4o-mini",
+        "cloudflare-playground/deepseek-v3"
+    ]
+    for m in default_fallbacks:
+        if m not in candidates:
+            candidates.append(m)
+
+    return candidates[:4]
+
 def call_model(messages, max_tokens=384):
     global current_engine
     with RawTerminalInput() as term_input:
         if current_engine == "cloud":
             conf = load_cloud_config()
-            url = conf.get("base_url", "http://localhost:20128/v1").rstrip('/') + "/chat/completions"
+            base_url = conf.get("base_url", "http://localhost:20128/v1").rstrip('/')
+            url = base_url + "/chat/completions"
             api_key = conf.get("api_key", "sk-omniroute")
-            model = conf.get("model", "auto")
+            primary_model = conf.get("model", "auto")
 
-            payload = json.dumps({
-                "model": model,
-                "messages": messages,
-                "temperature": 0.5,
-                "max_tokens": max_tokens,
-                "stream": True
-            }).encode('utf-8')
+            candidates = get_cloud_candidates(base_url, primary_model)
 
-            req = urllib.request.Request(
-                url,
-                data=payload,
-                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-            )
+            for idx, candidate in enumerate(candidates):
+                if idx > 0:
+                    prev_name = candidates[idx - 1]
+                    print(f"\n{YELLOW}[*] Model '{prev_name}' busy or unresponsive. Cycling to next free candidate: {BOLD}{candidate}{RESET}...")
 
-            try:
-                collected = []
-                is_sse = False
-                raw_lines = []
-                with urllib.request.urlopen(req, timeout=25) as resp:
-                    for line_bytes in resp:
-                        if term_input.check_cancel():
-                            stop_speech()
-                            raise StreamCancelled()
-                        line_str = line_bytes.decode('utf-8', errors='replace').strip()
-                        if not line_str or line_str.startswith(":") or line_str.startswith("event:"):
-                            continue
-                        if line_str.startswith("data: "):
-                            is_sse = True
-                            data_str = line_str[6:].strip()
-                            if data_str == "[DONE]":
-                                break
-                            try:
-                                chunk = json.loads(data_str)
-                                if "error" in chunk:
-                                    err_msg = chunk.get("error", {}).get("message", str(chunk.get("error")))
-                                    print(f"\n{RED}[OmniRoute Error]: {err_msg}{RESET}")
-                                    collected.append(f"[Error: {err_msg}]")
-                                    continue
-                                choices = chunk.get("choices", [])
+                payload = json.dumps({
+                    "model": candidate,
+                    "messages": messages,
+                    "temperature": 0.5,
+                    "max_tokens": max_tokens,
+                    "stream": True
+                }).encode('utf-8')
+
+                req = urllib.request.Request(
+                    url,
+                    data=payload,
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+                )
+
+                try:
+                    collected = []
+                    is_sse = False
+                    raw_lines = []
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        for line_bytes in resp:
+                            if term_input.check_cancel():
+                                stop_speech()
+                                raise StreamCancelled()
+                            line_str = line_bytes.decode('utf-8', errors='replace').strip()
+                            if not line_str or line_str.startswith(":") or line_str.startswith("event:"):
+                                continue
+                            if line_str.startswith("data: "):
+                                is_sse = True
+                                data_str = line_str[6:].strip()
+                                if data_str == "[DONE]":
+                                    break
+                                try:
+                                    chunk = json.loads(data_str)
+                                    if "error" in chunk:
+                                        err_msg = chunk.get("error", {}).get("message", str(chunk.get("error")))
+                                        collected.append(f"[Error: {err_msg}]")
+                                        continue
+                                    choices = chunk.get("choices", [])
+                                    if choices:
+                                        delta = choices[0].get("delta", {}).get("content", "") or choices[0].get("message", {}).get("content", "") or choices[0].get("text", "")
+                                        if delta:
+                                            sys.stdout.write(delta)
+                                            sys.stdout.flush()
+                                            collected.append(delta)
+                                except json.JSONDecodeError:
+                                    pass
+                            else:
+                                raw_lines.append(line_str)
+
+                    if not is_sse and raw_lines:
+                        full_text = "\n".join(raw_lines)
+                        try:
+                            data = json.loads(full_text)
+                            if "error" in data:
+                                err_msg = data.get("error", {}).get("message", str(data.get("error")))
+                                collected.append(f"[Error: {err_msg}]")
+                            else:
+                                choices = data.get("choices", [])
                                 if choices:
-                                    delta = choices[0].get("delta", {}).get("content", "") or choices[0].get("message", {}).get("content", "") or choices[0].get("text", "")
-                                    if delta:
-                                        sys.stdout.write(delta)
-                                        sys.stdout.flush()
-                                        collected.append(delta)
-                            except json.JSONDecodeError:
-                                pass
-                        else:
-                            raw_lines.append(line_str)
+                                    msg = choices[0].get("message", {}).get("content", "") or choices[0].get("text", "")
+                                    if msg:
+                                        print(msg)
+                                        collected.append(msg)
+                        except json.JSONDecodeError:
+                            print(full_text)
+                            collected.append(full_text)
 
-                if not is_sse and raw_lines:
-                    full_text = "\n".join(raw_lines)
-                    try:
-                        data = json.loads(full_text)
-                        if "error" in data:
-                            err_msg = data.get("error", {}).get("message", str(data.get("error")))
-                            print(f"\n{RED}[OmniRoute Error]: {err_msg}{RESET}")
-                            collected.append(f"[Error: {err_msg}]")
-                        else:
-                            choices = data.get("choices", [])
-                            if choices:
-                                msg = choices[0].get("message", {}).get("content", "") or choices[0].get("text", "")
-                                if msg:
-                                    print(msg)
-                                    collected.append(msg)
-                    except json.JSONDecodeError:
-                        print(full_text)
-                        collected.append(full_text)
+                    if is_sse and collected:
+                        print()
 
-                if is_sse:
-                    print()
+                    result_text = "".join(collected).strip()
+                    if result_text and not result_text.startswith("[Error:"):
+                        return result_text
 
-                result_text = "".join(collected).strip()
-                if result_text and not result_text.startswith("[Error:"):
-                    return result_text
-                else:
-                    print(f"\n{YELLOW}[!] Cloud returned no valid content. Falling back to local offline model...{RESET}")
-            except StreamCancelled:
-                raise
-            except Exception as e:
-                print(f"\n{YELLOW}[!] OmniRoute/Cloud endpoint error ({e}). Falling back to local neural engine...{RESET}")
+                except StreamCancelled:
+                    raise
+                except Exception:
+                    pass
 
-        # Fallback / Local Model (llama-server)
+            # Exhausted all cloud candidates without falling back to local
+            print(f"\n{RED}[!] All free cloud models are currently busy or unresponsive.{RESET}")
+            print(f"{YELLOW}[*] Try asking again in a moment, or type /cloud models to check available endpoints.{RESET}\n")
+            return ""
+
+        # Local Engine Mode (llama-server) - ONLY invoked when current_engine == 'local'
         payload = json.dumps({
             "model": "default",
             "messages": messages,
@@ -1262,8 +1300,9 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
         try:
             response = call_model(history)
             if not response or not response.strip():
-                print(f"\n{RED}[!] No response received from inference engine.{RESET}")
-                print(f"{YELLOW}[*] Check local llama-server: sudo systemctl status llama-server{RESET}\n")
+                if current_engine == "local":
+                    print(f"\n{RED}[!] No response from local neural engine.{RESET}")
+                    print(f"{YELLOW}[*] Check local llama-server: sudo systemctl status llama-server{RESET}\n")
                 continue
             history.append({"role": "assistant", "content": response})
             speak_text(response)
@@ -2169,7 +2208,7 @@ zenity --question --title="Confirm Installation" \
   --ok-label="Yes, Erase & Install" --cancel-label="Cancel" || exit 0
 
 LOG="/tmp/revenant_install.log"
-echo "=== Revenant OS 1.1 (Build 20.1) Installation Started ===" > "$LOG"
+echo "=== Revenant OS 1.1 (Build 20.2) Installation Started ===" > "$LOG"
 date >> "$LOG"
 
 (
@@ -2525,7 +2564,7 @@ insmod ext2
 set root='hd0,msdos1'
 search --no-floppy --fs-uuid --set=root $UUID
 
-menuentry "Revenant OS 1.1 (Build 20.1) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 20.2) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -2534,7 +2573,7 @@ menuentry "Revenant OS 1.1 (Build 20.1) - Agentic Linux" --class debian --class 
     initrd /boot/$INITRD
 }
 
-menuentry "Revenant OS 1.1 (Build 20.1) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 20.2) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -2558,11 +2597,11 @@ umount -l /mnt/target/dev 2>/dev/null || true
 umount -l /mnt/target 2>/dev/null || true
 
 echo "100"; echo "# Installation Complete!"
-) | zenity --progress --title="Installing Revenant OS 1.1 (Build 20.1)" --text="Starting installation..." --percentage=0 --auto-close
+) | zenity --progress --title="Installing Revenant OS 1.1 (Build 20.2)" --text="Starting installation..." --percentage=0 --auto-close
 
 if [ -f "$LOG" ] && grep -iq "Installing for i386-pc platform" "$LOG"; then
   zenity --info --title="Success" \
-    --text="<b>Revenant OS 1.1 (Build 20.1) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
+    --text="<b>Revenant OS 1.1 (Build 20.2) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
 else
   zenity --error --title="Error" \
     --text="An error occurred during installation. Check /tmp/revenant_install.log or the target drive."
@@ -2590,12 +2629,12 @@ if background_image /boot/grub/splash.png; then
   set color_highlight=cyan/black
 fi
 
-menuentry "Revenant OS 1.1 (Build 20.1) - Unified Field Agent (Offline Voice + Local 3B + OpenViking Memory)" {
+menuentry "Revenant OS 1.1 (Build 20.2) - Unified Field Agent (Offline Voice + Local 3B + OpenViking Memory)" {
     linux /live/vmlinuz boot=live components quiet splash
     initrd /live/initrd.img
 }
 
-menuentry "Revenant OS 1.1 (Build 20.1) (Safe Graphics / Failsafe)" {
+menuentry "Revenant OS 1.1 (Build 20.2) (Safe Graphics / Failsafe)" {
     linux /live/vmlinuz boot=live components nomodeset
     initrd /live/initrd.img
 }
@@ -2604,13 +2643,13 @@ EOF
 echo "[*] Packaging patched SquashFS (xz compression)..."
 mksquashfs "$PATCH_ROOT" "$WORKSPACE_DIR/image/live/filesystem.squashfs" -comp xz
 
-echo "[*] Building 1.1 Build 20.1 ISO with hybrid bootloader..."
-grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 20.1)"
+echo "[*] Building 1.1 Build 20.2 ISO with hybrid bootloader..."
+grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 20.2)"
 cp -f "$ISO_TARGET" "$ISO_ALIAS"
 
 echo "[*] Cleaning up workspace..."
 rm -rf "$WORKSPACE_DIR" "$PATCH_ROOT"
 
-echo "[*] Build Complete! Revenant OS 1.1 (Build 20.1) ISO ready at: $ISO_TARGET"
+echo "[*] Build Complete! Revenant OS 1.1 (Build 20.2) ISO ready at: $ISO_TARGET"
 ls -lh "$ISO_TARGET" "$ISO_ALIAS"
 
