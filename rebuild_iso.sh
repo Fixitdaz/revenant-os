@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="/var/tmp/toughbook_rebuild_1_1"
 PATCH_ROOT="/var/tmp/patch_root_1_1"
 ISO_SOURCE="$SCRIPT_DIR/revenant_os_toughbook_v15_5.iso"
-ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build20.2.iso"
+ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build20.3.iso"
 ISO_ALIAS="$SCRIPT_DIR/revenant_os_latest.iso"
 CACHE_DIR="/var/tmp/revenant_cache"
 
@@ -386,7 +386,8 @@ def load_config():
     cfg = {
         "voice_enabled": False,
         "default_mode": "general",
-        "default_engine": "local"
+        "default_engine": "local",
+        "kamikaze_mode": False
     }
     if os.path.exists(CONFIG_PATH):
         try:
@@ -406,6 +407,7 @@ def save_config(cfg):
 
 app_cfg = load_config()
 VOICE_ENABLED = app_cfg.get("voice_enabled", False)
+KAMIKAZE_MODE = app_cfg.get("kamikaze_mode", False)
 mic_requested = False
 current_mode = app_cfg.get("default_mode", "general")
 current_engine = app_cfg.get("default_engine", "local")
@@ -750,11 +752,11 @@ def remember_fact(fact):
     return True
 
 def execute_tool(action_type, payload):
+    global KAMIKAZE_MODE
     if action_type == "EXEC":
         cmd = payload.strip()
-        print(f"\n{YELLOW}{BOLD}▶ Proposed Action:{RESET} {CYAN}{cmd}{RESET}")
-        choice = input(f"{YELLOW}Execute? [Y/n/edit]: {RESET}").strip().lower()
-        if choice in ('', 'y', 'yes'):
+        if KAMIKAZE_MODE:
+            print(f"\n{RED}{BOLD}⚡ Auto-Executing (Kamikaze):{RESET} {CYAN}{cmd}{RESET}")
             try:
                 proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=60)
                 output = proc.stdout.strip()
@@ -765,14 +767,28 @@ def execute_tool(action_type, payload):
                 return "Command timed out after 60 seconds."
             except Exception as e:
                 return f"Error executing command: {e}"
-        elif choice == 'edit':
-            new_cmd = input(f"{YELLOW}Edit command: {RESET}").strip()
-            if new_cmd:
-                return execute_tool("EXEC", new_cmd)
-            return "Command cancelled."
         else:
-            print(f"{RED}Command cancelled by user.{RESET}")
-            return "Command rejected by user."
+            print(f"\n{YELLOW}{BOLD}▶ Proposed Action:{RESET} {CYAN}{cmd}{RESET}")
+            choice = input(f"{YELLOW}Execute? [Y/n/edit]: {RESET}").strip().lower()
+            if choice in ('', 'y', 'yes'):
+                try:
+                    proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=60)
+                    output = proc.stdout.strip()
+                    print(f"{DIM}{output}{RESET}\n")
+                    return f"Exit code {proc.returncode}\nOutput:\n{output}"
+                except subprocess.TimeoutExpired:
+                    print(f"{RED}[Command timed out after 60s]{RESET}")
+                    return "Command timed out after 60 seconds."
+                except Exception as e:
+                    return f"Error executing command: {e}"
+            elif choice == 'edit':
+                new_cmd = input(f"{YELLOW}Edit command: {RESET}").strip()
+                if new_cmd:
+                    return execute_tool("EXEC", new_cmd)
+                return "Command cancelled."
+            else:
+                print(f"{RED}Command cancelled by user.{RESET}")
+                return "Command rejected by user."
 
     elif action_type == "READ":
         path = payload.strip()
@@ -988,7 +1004,8 @@ def print_banner():
     eng_str = f"{GREEN}Local 3B (Offline){RESET}" if current_engine == "local" else f"{CYAN}OmniRoute / Cloud{RESET}"
     voice_str = f"{GREEN}Voice: ON 🔊{RESET}" if VOICE_ENABLED else f"{YELLOW}Voice: OFF 🔇{RESET}"
     predict_str = f"{GREEN}Fish Autosuggest Active{RESET}" if PROMPT_TOOLKIT_AVAILABLE else f"{DIM}Readline Mode{RESET}"
-    print(f"{DIM}Engine: [{eng_str}{DIM}] | Memory: [{GREEN}OpenViking Active{RESET}{DIM}] | [{voice_str}{DIM}] | Mode: [{col}{p['name']}{RESET}{DIM}]{RESET}")
+    kami_str = f"{RED}{BOLD}⚡ KAMIKAZE ACTIVE{RESET}" if KAMIKAZE_MODE else f"{DIM}Interactive [Y/n]{RESET}"
+    print(f"{DIM}Engine: [{eng_str}{DIM}] | Memory: [{GREEN}OpenViking Active{RESET}{DIM}] | [{voice_str}{DIM}] | Exec: [{kami_str}{DIM}] | Mode: [{col}{p['name']}{RESET}{DIM}]{RESET}")
     print(f"{DIM}Predictive: [{predict_str}{DIM}] (Press → to accept suggestions | Press <Esc> to cancel thinking){RESET}")
     if current_engine == "cloud":
         omni_stat = f"{GREEN}ONLINE 🌐 (Free Tiers Ready){RESET}" if is_omniroute_running() else f"{YELLOW}STANDBY{RESET}"
@@ -1017,6 +1034,7 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
 
     slash_commands = [
         '/mechanic', '/electronics', '/sysadmin', '/general',
+        '/kamikaze', '/kamikaze on', '/kamikaze off', '/yolo', '/auto',
         '/cloud', '/cloud start', '/cloud stop', '/cloud free', '/cloud models', '/cloud model', '/cloud config', '/local',
         '/remember', '/recall',
         '/voice', '/voice on', '/voice off', '/mute', '/unmute',
@@ -1119,6 +1137,27 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
                 print(f"\n{PERSONAS[target]['color']}[✓] Switched to {PERSONAS[target]['name']} mode.{RESET}\n")
             else:
                 print(f"{RED}[!] Unknown mode: {target}. Available: general, mechanic, electronics, sysadmin{RESET}\n")
+            continue
+
+        # Kamikaze / Autonomous execution mode
+        elif cmd_lower in ('/kamikaze on', '/auto on', '/yolo on'):
+            KAMIKAZE_MODE = True
+            app_cfg['kamikaze_mode'] = True
+            save_config(app_cfg)
+            print(f"\n{RED}{BOLD}[⚡] Kamikaze Mode ENABLED!{RESET} {YELLOW}Agent will auto-execute all tool steps without confirmation prompts.{RESET}\n")
+            continue
+        elif cmd_lower in ('/kamikaze off', '/auto off', '/yolo off'):
+            KAMIKAZE_MODE = False
+            app_cfg['kamikaze_mode'] = False
+            save_config(app_cfg)
+            print(f"\n{GREEN}[✓] Kamikaze Mode DISABLED.{RESET} {DIM}Interactive per-step confirmation [Y/n] restored.{RESET}\n")
+            continue
+        elif cmd_lower in ('/kamikaze', '/yolo', '/auto'):
+            KAMIKAZE_MODE = not KAMIKAZE_MODE
+            app_cfg['kamikaze_mode'] = KAMIKAZE_MODE
+            save_config(app_cfg)
+            state = f"{RED}{BOLD}ENABLED ⚡ (Autonomous){RESET}" if KAMIKAZE_MODE else f"{GREEN}DISABLED [Y/n] (Interactive){RESET}"
+            print(f"\n{CYAN}[*] Kamikaze Mode is now {state}.{RESET}\n")
             continue
 
         # Engine switching: OmniRoute / Cloud vs Local
@@ -1270,6 +1309,7 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
             print(f"  {BOLD}/electronics{RESET}     Switch to Circuit Board, Multimeter & Microcontroller mode")
             print(f"  {BOLD}/sysadmin{RESET}        Switch to Linux Recovery, Network & Serial Comms mode")
             print(f"  {BOLD}/general{RESET}         Switch to General Computing & Scripting mode")
+            print(f"  {BOLD}/kamikaze [on/off]{RESET} Toggle autonomous auto-execution (no [Y/n] per step)")
             print(f"  {BOLD}/voice [on/off]{RESET}   Toggle or set Piper voice talkback (persisted)")
             print(f"  {BOLD}/cloud [start/stop]{RESET} Toggle or manage OmniRoute / Cloud API (RAM-managed)")
             print(f"  {BOLD}/cloud free{RESET}         Connect verified free-tier providers (OpenCode, Pollinations, etc.)")
@@ -1307,14 +1347,24 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
             history.append({"role": "assistant", "content": response})
             speak_text(response)
 
-            tool_matches = re.findall(r'\[(EXEC|READ|WRITE):\s*(.*?)\]', response, re.DOTALL)
-            for action_type, payload in tool_matches:
-                result = execute_tool(action_type, payload)
-                history.append({"role": "user", "content": f"Tool execution result:\n{result}"})
-                print(f"\n{CYAN}[Revenant Agent Analyzing Result...]{RESET}")
-                followup = call_model(history, max_tokens=256)
-                if followup:
-                    history.append({"role": "assistant", "content": followup})
+            # Autonomous multi-step tool chaining loop (up to 10 rounds)
+            current_resp = response
+            for round_num in range(10):
+                tool_matches = re.findall(r'\[(EXEC|READ|WRITE):\s*(.*?)\]', current_resp, re.DOTALL)
+                if not tool_matches:
+                    break
+                for action_type, payload in tool_matches:
+                    result = execute_tool(action_type, payload)
+                    history.append({"role": "user", "content": f"Tool execution result:\n{result}"})
+
+                print(f"\n{CYAN}[Revenant Agent Analyzing Result... (Step {round_num + 1})]{RESET}")
+                followup = call_model(history, max_tokens=384)
+                if not followup or not followup.strip():
+                    break
+                history.append({"role": "assistant", "content": followup})
+                current_resp = followup
+                # If this is the concluding response with no more tool calls, speak final report!
+                if not re.search(r'\[(EXEC|READ|WRITE):\s*(.*?)\]', followup):
                     speak_text(followup)
 
             print()
@@ -2208,7 +2258,7 @@ zenity --question --title="Confirm Installation" \
   --ok-label="Yes, Erase & Install" --cancel-label="Cancel" || exit 0
 
 LOG="/tmp/revenant_install.log"
-echo "=== Revenant OS 1.1 (Build 20.2) Installation Started ===" > "$LOG"
+echo "=== Revenant OS 1.1 (Build 20.3) Installation Started ===" > "$LOG"
 date >> "$LOG"
 
 (
@@ -2564,7 +2614,7 @@ insmod ext2
 set root='hd0,msdos1'
 search --no-floppy --fs-uuid --set=root $UUID
 
-menuentry "Revenant OS 1.1 (Build 20.2) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 20.3) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -2573,7 +2623,7 @@ menuentry "Revenant OS 1.1 (Build 20.2) - Agentic Linux" --class debian --class 
     initrd /boot/$INITRD
 }
 
-menuentry "Revenant OS 1.1 (Build 20.2) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 20.3) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -2597,11 +2647,11 @@ umount -l /mnt/target/dev 2>/dev/null || true
 umount -l /mnt/target 2>/dev/null || true
 
 echo "100"; echo "# Installation Complete!"
-) | zenity --progress --title="Installing Revenant OS 1.1 (Build 20.2)" --text="Starting installation..." --percentage=0 --auto-close
+) | zenity --progress --title="Installing Revenant OS 1.1 (Build 20.3)" --text="Starting installation..." --percentage=0 --auto-close
 
 if [ -f "$LOG" ] && grep -iq "Installing for i386-pc platform" "$LOG"; then
   zenity --info --title="Success" \
-    --text="<b>Revenant OS 1.1 (Build 20.2) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
+    --text="<b>Revenant OS 1.1 (Build 20.3) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
 else
   zenity --error --title="Error" \
     --text="An error occurred during installation. Check /tmp/revenant_install.log or the target drive."
@@ -2629,12 +2679,12 @@ if background_image /boot/grub/splash.png; then
   set color_highlight=cyan/black
 fi
 
-menuentry "Revenant OS 1.1 (Build 20.2) - Unified Field Agent (Offline Voice + Local 3B + OpenViking Memory)" {
+menuentry "Revenant OS 1.1 (Build 20.3) - Unified Field Agent (Offline Voice + Local 3B + OpenViking Memory)" {
     linux /live/vmlinuz boot=live components quiet splash
     initrd /live/initrd.img
 }
 
-menuentry "Revenant OS 1.1 (Build 20.2) (Safe Graphics / Failsafe)" {
+menuentry "Revenant OS 1.1 (Build 20.3) (Safe Graphics / Failsafe)" {
     linux /live/vmlinuz boot=live components nomodeset
     initrd /live/initrd.img
 }
@@ -2643,13 +2693,13 @@ EOF
 echo "[*] Packaging patched SquashFS (xz compression)..."
 mksquashfs "$PATCH_ROOT" "$WORKSPACE_DIR/image/live/filesystem.squashfs" -comp xz
 
-echo "[*] Building 1.1 Build 20.2 ISO with hybrid bootloader..."
-grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 20.2)"
+echo "[*] Building 1.1 Build 20.3 ISO with hybrid bootloader..."
+grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 20.3)"
 cp -f "$ISO_TARGET" "$ISO_ALIAS"
 
 echo "[*] Cleaning up workspace..."
 rm -rf "$WORKSPACE_DIR" "$PATCH_ROOT"
 
-echo "[*] Build Complete! Revenant OS 1.1 (Build 20.2) ISO ready at: $ISO_TARGET"
+echo "[*] Build Complete! Revenant OS 1.1 (Build 20.3) ISO ready at: $ISO_TARGET"
 ls -lh "$ISO_TARGET" "$ISO_ALIAS"
 
