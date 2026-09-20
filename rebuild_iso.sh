@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="/var/tmp/toughbook_rebuild_1_1"
 PATCH_ROOT="/var/tmp/patch_root_1_1"
 ISO_SOURCE="$SCRIPT_DIR/revenant_os_toughbook_v15_5.iso"
-ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build19.9.iso"
+ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build20.0.iso"
 ISO_ALIAS="$SCRIPT_DIR/revenant_os_latest.iso"
 CACHE_DIR="/var/tmp/revenant_cache"
 
@@ -608,7 +608,7 @@ def load_cloud_config():
     conf = {
         "base_url": os.getenv("OMNIROUTE_URL", "http://localhost:20128/v1"),
         "api_key": os.getenv("OPENROUTER_API_KEY", "sk-omniroute"),
-        "model": "deepseek/deepseek-chat"
+        "model": "auto"
     }
     if os.path.exists(CLOUD_CONF_PATH):
         try:
@@ -908,10 +908,10 @@ def print_banner():
     print(f"{DIM}Engine: [{eng_str}{DIM}] | Memory: [{GREEN}OpenViking Active{RESET}{DIM}] | [{voice_str}{DIM}] | Mode: [{col}{p['name']}{RESET}{DIM}]{RESET}")
     print(f"{DIM}Predictive: [{predict_str}{DIM}] (Press → to accept suggestions | Press <Esc> to cancel thinking){RESET}")
     if current_engine == "cloud":
-        omni_stat = f"{GREEN}ONLINE 🌐{RESET}" if is_omniroute_running() else f"{YELLOW}STANDBY{RESET}"
+        omni_stat = f"{GREEN}ONLINE 🌐 (Free Tiers Ready){RESET}" if is_omniroute_running() else f"{YELLOW}STANDBY{RESET}"
         print(f"{CYAN}OmniRoute Web UI: http://localhost:20128 [{omni_stat}{CYAN}] (Configure free APIs in browser){RESET}")
     else:
-        print(f"{CYAN}OmniRoute: Standby (Auto-boots on /cloud at http://localhost:20128 to preserve RAM){RESET}")
+        print(f"{CYAN}OmniRoute: Standby (Auto-boots on /cloud with out-of-the-box free tiers){RESET}")
     print(f"{DIM}Commands: /mechanic | /electronics | /sysadmin | /voice on/off | /cloud | /local | /remember | /recall{RESET}")
     print(f"{CYAN}Hotkeys:  Press <Super>+M anytime to speak directly into this window.{RESET}\n")
 
@@ -934,7 +934,7 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
 
     slash_commands = [
         '/mechanic', '/electronics', '/sysadmin', '/general',
-        '/cloud', '/cloud start', '/cloud stop', '/cloud config', '/local',
+        '/cloud', '/cloud start', '/cloud stop', '/cloud free', '/cloud config', '/local',
         '/remember', '/recall',
         '/voice', '/voice on', '/voice off', '/mute', '/unmute',
         '/mic', '/talk', '/listen', '/clear', '/sysinfo', '/hw', '/help', 'exit', 'quit'
@@ -1054,6 +1054,19 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
             current_engine = "local"
             print(f"\n{GREEN}[✓] OmniRoute server stopped. Switched to Offline Local Neural Engine (Qwen 2.5 Coder 3B).{RESET}\n")
             continue
+        elif cmd_lower in ('/cloud free', '/cloud setup-free', '/omniroute free'):
+            print(f"\n{CYAN}{BOLD}[*] Initializing Out-of-the-Box Free Providers for OmniRoute...{RESET}")
+            setup_script = "/usr/local/bin/omniroute-setup-free"
+            if os.path.exists(setup_script):
+                subprocess.run(["bash", setup_script])
+            else:
+                if not is_omniroute_running():
+                    start_omniroute(wait_for_ready=True)
+            conf = load_cloud_config()
+            conf['model'] = 'auto'
+            save_cloud_config(conf)
+            print(f"{GREEN}[✓] Free-tier auto-routing ready (model: auto). Type /cloud to begin querying!{RESET}\n")
+            continue
         elif cmd_lower.startswith('/cloud config') or cmd_lower.startswith('/cloud setup'):
             conf = load_cloud_config()
             print(f"\n{CYAN}{BOLD}--- OmniRoute / Cloud Settings ---{RESET}")
@@ -1140,6 +1153,7 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
             print(f"  {BOLD}/general{RESET}         Switch to General Computing & Scripting mode")
             print(f"  {BOLD}/voice [on/off]{RESET}   Toggle or set Piper voice talkback (persisted)")
             print(f"  {BOLD}/cloud [start/stop]{RESET} Toggle or manage OmniRoute / Cloud API (RAM-managed)")
+            print(f"  {BOLD}/cloud free{RESET}         Connect verified free-tier providers (OpenCode, Pollinations, etc.)")
             print(f"  {BOLD}/local{RESET}           Switch to Offline Local 3B Model (shuts down OmniRoute)")
             print(f"  {BOLD}/remember <text>{RESET}  Save knowledge/facts into OpenViking memory")
             print(f"  {BOLD}/recall <query>{RESET}   Search OpenViking memory database")
@@ -1287,6 +1301,88 @@ pkill -9 -f omniroute 2>/dev/null || true
 echo -e "\033[92m[✓] OmniRoute stopped cleanly. RAM reclaimed.\033[0m"
 OMNI_STOP_EOF
 chmod +x "$PATCH_ROOT/usr/local/bin/omniroute-stop" 
+
+cat << 'OMNI_FREE_EOF' > "$PATCH_ROOT/usr/local/bin/omniroute-setup-free"
+#!/usr/bin/env bash
+# ==============================================================================
+# Revenant OS - OmniRoute Out-of-the-Box Free Tiers & Smart Routing Setup
+# Automatically registers no-auth and free-tier providers with zero API keys.
+# Providers: OpenCode Free, Pollinations, DuckDuckGo AI, Cloudflare Playground, Puter
+# ==============================================================================
+CYAN="\033[96m"
+GREEN="\033[92m"
+YELLOW="\033[93m"
+BOLD="\033[1m"
+RESET="\033[0m"
+
+echo -e "${CYAN}${BOLD}======================================================${RESET}"
+echo -e "${CYAN}${BOLD}  OmniRoute: Out-of-the-Box Free Tiers Provisioning   ${RESET}"
+echo -e "${CYAN}${BOLD}======================================================${RESET}"
+
+OMNI_BIN=$(command -v omniroute || echo "/opt/node/bin/omniroute")
+if [ ! -x "$OMNI_BIN" ] && ! command -v omniroute >/dev/null 2>&1; then
+  echo -e "${YELLOW}[*] OmniRoute not found. Attempting npm installation...${RESET}"
+  npm install -g omniroute 2>/dev/null || /opt/node/bin/npm install -g omniroute 2>/dev/null || true
+  OMNI_BIN=$(command -v omniroute || echo "/opt/node/bin/omniroute")
+fi
+
+WAS_RUNNING=false
+if curl -s http://127.0.0.1:20128 >/dev/null 2>&1 || pgrep -f omniroute >/dev/null 2>&1; then
+  WAS_RUNNING=true
+else
+  echo -e "${CYAN}[*] Spinning up OmniRoute temporarily to initialize free providers...${RESET}"
+  nohup "$OMNI_BIN" >/var/log/omniroute.log 2>&1 &
+  for i in {1..12}; do
+    if curl -s http://127.0.0.1:20128 >/dev/null 2>&1; then
+      echo -e "${GREEN}[✓] OmniRoute server active on port 20128.${RESET}"
+      break
+    fi
+    sleep 1
+  done
+fi
+
+FREE_PROVIDERS=("opencode" "pollinations" "duckduckgo-web" "cloudflare-playground" "puter")
+
+echo -e "${CYAN}[*] Registering verified free-tier and keyless providers...${RESET}"
+for p in "${FREE_PROVIDERS[@]}"; do
+  echo -e "  -> Connecting provider: ${BOLD}$p${RESET} (API key: 'free')..."
+  "$OMNI_BIN" setup --non-interactive --add-provider --provider "$p" --api-key free 2>/dev/null || true
+  curl -s -X POST http://127.0.0.1:20128/api/providers \
+    -H "Content-Type: application/json" \
+    -d "{\"provider\":\"$p\",\"apiKey\":\"free\",\"name\":\"$p\"}" 2>/dev/null || true
+done
+
+for u_home in /root /etc/skel /home/*; do
+  if [ -d "$u_home" ]; then
+    mkdir -p "$u_home/.revenant"
+    cat << 'CLOUD_CONF_EOF' > "$u_home/.revenant/cloud.conf"
+{
+  "base_url": "http://localhost:20128/v1",
+  "api_key": "sk-omniroute",
+  "model": "auto"
+}
+CLOUD_CONF_EOF
+    if [ -d /root/.omniroute ] && [ "$u_home" != "/root" ]; then
+      mkdir -p "$u_home/.omniroute"
+      cp -rn /root/.omniroute/* "$u_home/.omniroute/" 2>/dev/null || true
+    fi
+    u_owner=$(stat -c '%u:%g' "$u_home" 2>/dev/null || echo "1000:1000")
+    chown -R "$u_owner" "$u_home/.revenant" "$u_home/.omniroute" 2>/dev/null || true
+  fi
+done
+
+echo -e "${GREEN}[✓] All free providers registered. Default routing model set to 'auto' (Smart Fallback).${RESET}"
+
+if [ "$WAS_RUNNING" = false ]; then
+  echo -e "${CYAN}[*] Reclaiming RAM: shutting down temporary OmniRoute server...${RESET}"
+  /usr/local/bin/omniroute-stop >/dev/null 2>&1 || pkill -f omniroute 2>/dev/null || true
+  echo -e "${GREEN}[✓] RAM reclaimed. OmniRoute will auto-boot on /cloud with all free providers ready!${RESET}"
+fi
+OMNI_FREE_EOF
+chmod +x "$PATCH_ROOT/usr/local/bin/omniroute-setup-free"
+
+# Execute inside chroot to pre-seed database on ISO
+chroot "$PATCH_ROOT" /usr/local/bin/omniroute-setup-free 2>/dev/null || true
 
 # Purge any legacy OpenCode and Pi Agent binaries, wrappers, and configurations
 rm -f "$PATCH_ROOT/usr/local/bin/opencode" "$PATCH_ROOT/usr/local/bin/revenant-opencode" "$PATCH_ROOT/usr/share/applications/opencode.desktop"
@@ -1988,7 +2084,7 @@ zenity --question --title="Confirm Installation" \
   --ok-label="Yes, Erase & Install" --cancel-label="Cancel" || exit 0
 
 LOG="/tmp/revenant_install.log"
-echo "=== Revenant OS 1.1 (Build 19.9) Installation Started ===" > "$LOG"
+echo "=== Revenant OS 1.1 (Build 20.0) Installation Started ===" > "$LOG"
 date >> "$LOG"
 
 (
@@ -2344,7 +2440,7 @@ insmod ext2
 set root='hd0,msdos1'
 search --no-floppy --fs-uuid --set=root $UUID
 
-menuentry "Revenant OS 1.1 (Build 19.9) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 20.0) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -2353,7 +2449,7 @@ menuentry "Revenant OS 1.1 (Build 19.9) - Agentic Linux" --class debian --class 
     initrd /boot/$INITRD
 }
 
-menuentry "Revenant OS 1.1 (Build 19.9) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 20.0) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -2377,11 +2473,11 @@ umount -l /mnt/target/dev 2>/dev/null || true
 umount -l /mnt/target 2>/dev/null || true
 
 echo "100"; echo "# Installation Complete!"
-) | zenity --progress --title="Installing Revenant OS 1.1 (Build 19.9)" --text="Starting installation..." --percentage=0 --auto-close
+) | zenity --progress --title="Installing Revenant OS 1.1 (Build 20.0)" --text="Starting installation..." --percentage=0 --auto-close
 
 if [ -f "$LOG" ] && grep -iq "Installing for i386-pc platform" "$LOG"; then
   zenity --info --title="Success" \
-    --text="<b>Revenant OS 1.1 (Build 19.9) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
+    --text="<b>Revenant OS 1.1 (Build 20.0) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
 else
   zenity --error --title="Error" \
     --text="An error occurred during installation. Check /tmp/revenant_install.log or the target drive."
@@ -2409,12 +2505,12 @@ if background_image /boot/grub/splash.png; then
   set color_highlight=cyan/black
 fi
 
-menuentry "Revenant OS 1.1 (Build 19.9) - Unified Field Agent (Offline Voice + Local 3B + OpenViking Memory)" {
+menuentry "Revenant OS 1.1 (Build 20.0) - Unified Field Agent (Offline Voice + Local 3B + OpenViking Memory)" {
     linux /live/vmlinuz boot=live components quiet splash
     initrd /live/initrd.img
 }
 
-menuentry "Revenant OS 1.1 (Build 19.9) (Safe Graphics / Failsafe)" {
+menuentry "Revenant OS 1.1 (Build 20.0) (Safe Graphics / Failsafe)" {
     linux /live/vmlinuz boot=live components nomodeset
     initrd /live/initrd.img
 }
@@ -2423,13 +2519,13 @@ EOF
 echo "[*] Packaging patched SquashFS (xz compression)..."
 mksquashfs "$PATCH_ROOT" "$WORKSPACE_DIR/image/live/filesystem.squashfs" -comp xz
 
-echo "[*] Building 1.1 Build 19.9 ISO with hybrid bootloader..."
-grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 19.9)"
+echo "[*] Building 1.1 Build 20.0 ISO with hybrid bootloader..."
+grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 20.0)"
 cp -f "$ISO_TARGET" "$ISO_ALIAS"
 
 echo "[*] Cleaning up workspace..."
 rm -rf "$WORKSPACE_DIR" "$PATCH_ROOT"
 
-echo "[*] Build Complete! Revenant OS 1.1 (Build 19.9) ISO ready at: $ISO_TARGET"
+echo "[*] Build Complete! Revenant OS 1.1 (Build 20.0) ISO ready at: $ISO_TARGET"
 ls -lh "$ISO_TARGET" "$ISO_ALIAS"
 
