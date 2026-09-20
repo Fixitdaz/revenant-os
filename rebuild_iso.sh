@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="/var/tmp/toughbook_rebuild_1_1"
 PATCH_ROOT="/var/tmp/patch_root_1_1"
 ISO_SOURCE="$SCRIPT_DIR/revenant_os_toughbook_v15_5.iso"
-ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build20.3.iso"
+ISO_TARGET="$SCRIPT_DIR/revenant_os_1.1_build20.4.iso"
 ISO_ALIAS="$SCRIPT_DIR/revenant_os_latest.iso"
 CACHE_DIR="/var/tmp/revenant_cache"
 
@@ -61,6 +61,7 @@ chroot "$PATCH_ROOT" apt-get install -y --no-install-recommends \
   alsa-utils \
   wmctrl \
   xdotool \
+  xclip \
   libnss3 \
   libatk1.0-0 \
   libatk-bridge2.0-0 \
@@ -314,6 +315,7 @@ try:
     from prompt_toolkit.history import FileHistory
     from prompt_toolkit.styles import Style
     from prompt_toolkit.formatted_text import HTML
+    from prompt_toolkit.key_binding import KeyBindings
     PROMPT_TOOLKIT_AVAILABLE = True
 except ImportError:
     PROMPT_TOOLKIT_AVAILABLE = False
@@ -751,6 +753,75 @@ def remember_fact(fact):
             pass
     return True
 
+def set_system_clipboard(text):
+    if not text:
+        return
+    try:
+        if shutil.which("xclip"):
+            subprocess.run(["xclip", "-selection", "clipboard"], input=text.encode("utf-8"), check=False, stderr=subprocess.DEVNULL)
+        elif shutil.which("xsel"):
+            subprocess.run(["xsel", "--clipboard", "--input"], input=text.encode("utf-8"), check=False, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+def get_system_clipboard():
+    try:
+        if shutil.which("xclip"):
+            res = subprocess.run(["xclip", "-selection", "clipboard", "-o"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=1)
+            return res.stdout
+        elif shutil.which("xsel"):
+            res = subprocess.run(["xsel", "--clipboard", "--output"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=1)
+            return res.stdout
+    except Exception:
+        pass
+    return ""
+
+def create_keybindings():
+    if not PROMPT_TOOLKIT_AVAILABLE:
+        return None
+    try:
+        kb = KeyBindings()
+
+        @kb.add('c-q')
+        def _exit(event):
+            event.app.exit(result='exit')
+
+        @kb.add('c-c')
+        def _copy(event):
+            buf = event.current_buffer
+            data = buf.copy_selection()
+            selected_text = data.text if data else ""
+            if selected_text:
+                set_system_clipboard(selected_text)
+            else:
+                if buf.text:
+                    set_system_clipboard(buf.text)
+
+        @kb.add('c-v')
+        def _paste(event):
+            clip = get_system_clipboard()
+            if clip:
+                event.current_buffer.insert_text(clip)
+            else:
+                try:
+                    event.current_buffer.paste_clipboard_data(event.app.clipboard.get_data())
+                except Exception:
+                    pass
+
+        @kb.add('c-x')
+        def _cut(event):
+            data = event.current_buffer.cut_selection()
+            if data and data.text:
+                set_system_clipboard(data.text)
+
+        @kb.add('c-z')
+        def _undo(event):
+            event.current_buffer.undo()
+
+        return kb
+    except Exception:
+        return None
+
 def execute_tool(action_type, payload):
     global KAMIKAZE_MODE
     if action_type == "EXEC":
@@ -1012,11 +1083,12 @@ def print_banner():
         print(f"{CYAN}OmniRoute Web UI: http://localhost:20128 [{omni_stat}{CYAN}] (Configure free APIs in browser){RESET}")
     else:
         print(f"{CYAN}OmniRoute: Standby (Auto-boots on /cloud with out-of-the-box free tiers){RESET}")
-    print(f"{DIM}Commands: /mechanic | /electronics | /sysadmin | /voice on/off | /cloud | /local | /remember | /recall{RESET}")
+    print(f"{DIM}Shortcuts: Ctrl+C (Copy) | Ctrl+V (Paste) | Ctrl+Z (Undo) | Ctrl+Q (Exit){RESET}")
+    print(f"{DIM}Commands: /sysadmin | /kamikaze | /voice on/off | /cloud | /local | /help | exit{RESET}")
     print(f"{CYAN}Hotkeys:  Press <Super>+M anytime to speak directly into this window.{RESET}\n")
 
 def run_agent_loop(initial_prompt=None, initial_mic=False):
-    global VOICE_ENABLED, mic_requested, current_mode, current_engine, app_cfg
+    global VOICE_ENABLED, KAMIKAZE_MODE, mic_requested, current_mode, current_engine, app_cfg
 
     # Ensure OmniRoute is stopped cleanly on exit to preserve Toughbook RAM
     atexit.register(lambda: stop_omniroute(announce=False))
@@ -1048,6 +1120,7 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
                 history=FileHistory(HISTORY_PATH),
                 auto_suggest=AutoSuggestFromHistory(),
                 completer=WordCompleter(slash_commands, ignore_case=True, sentence=True),
+                key_bindings=create_keybindings(),
                 style=Style.from_dict({
                     'auto-suggest': '#777777 italic',
                     'prompt': '#00ff88 bold',
@@ -1088,11 +1161,14 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
                 mic_requested = False
                 handle_mic_input()
                 continue
-            except (KeyboardInterrupt, EOFError):
+            except KeyboardInterrupt:
                 if mic_requested:
                     mic_requested = False
                     handle_mic_input()
                     continue
+                print(f"\n{DIM}(Ctrl+C: Copy | Press Ctrl+Q or type exit to quit){RESET}")
+                continue
+            except EOFError:
                 print(f"\n{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
                 break
 
@@ -1105,26 +1181,26 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
             print(f"\n{YELLOW}Exiting Revenant Agent. Goodbye!{RESET}")
             break
 
-        # Persona / Mode switching
-        if cmd_lower in ('/mechanic', '/mech'):
+        # Persona / Mode switching (supports with or without slash)
+        if cmd_lower in ('/mechanic', 'mechanic', '/mech', 'mech'):
             current_mode = "mechanic"
             history[0] = {"role": "system", "content": PERSONAS["mechanic"]["prompt"]}
             print(f"\n{YELLOW}[✓] Switched to Motor Mechanic Field Specialist mode.{RESET}")
             print(f"{DIM}Automotive diagnostics, DTC OBD-II, CAN bus & engine repair loaded.{RESET}\n")
             continue
-        elif cmd_lower in ('/electronics', '/elec'):
+        elif cmd_lower in ('/electronics', 'electronics', '/elec', 'elec'):
             current_mode = "electronics"
             history[0] = {"role": "system", "content": PERSONAS["electronics"]["prompt"]}
             print(f"\n{MAGENTA}[✓] Switched to Electronics Specialist mode.{RESET}")
             print(f"{DIM}Circuit board diagnostics, multimeter test points & microcontrollers loaded.{RESET}\n")
             continue
-        elif cmd_lower in ('/sysadmin', '/sys'):
+        elif cmd_lower in ('/sysadmin', 'sysadmin', '/sys', 'sys'):
             current_mode = "sysadmin"
             history[0] = {"role": "system", "content": PERSONAS["sysadmin"]["prompt"]}
             print(f"\n{GREEN}[✓] Switched to Field Linux Systems Administrator mode.{RESET}")
             print(f"{DIM}System recovery, network analysis, disk repair & serial comms loaded.{RESET}\n")
             continue
-        elif cmd_lower in ('/general', '/coder', '/ai'):
+        elif cmd_lower in ('/general', 'general', '/coder', 'coder', '/ai', 'ai'):
             current_mode = "general"
             history[0] = {"role": "system", "content": PERSONAS["general"]["prompt"]}
             print(f"\n{CYAN}[✓] Switched to General Field Assistant mode.{RESET}\n")
@@ -1139,20 +1215,20 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
                 print(f"{RED}[!] Unknown mode: {target}. Available: general, mechanic, electronics, sysadmin{RESET}\n")
             continue
 
-        # Kamikaze / Autonomous execution mode
-        elif cmd_lower in ('/kamikaze on', '/auto on', '/yolo on'):
+        # Kamikaze / Autonomous execution mode (supports with or without slash)
+        elif cmd_lower in ('/kamikaze on', 'kamikaze on', '/auto on', 'auto on', '/yolo on', 'yolo on'):
             KAMIKAZE_MODE = True
             app_cfg['kamikaze_mode'] = True
             save_config(app_cfg)
             print(f"\n{RED}{BOLD}[⚡] Kamikaze Mode ENABLED!{RESET} {YELLOW}Agent will auto-execute all tool steps without confirmation prompts.{RESET}\n")
             continue
-        elif cmd_lower in ('/kamikaze off', '/auto off', '/yolo off'):
+        elif cmd_lower in ('/kamikaze off', 'kamikaze off', '/auto off', 'auto off', '/yolo off', 'yolo off'):
             KAMIKAZE_MODE = False
             app_cfg['kamikaze_mode'] = False
             save_config(app_cfg)
             print(f"\n{GREEN}[✓] Kamikaze Mode DISABLED.{RESET} {DIM}Interactive per-step confirmation [Y/n] restored.{RESET}\n")
             continue
-        elif cmd_lower in ('/kamikaze', '/yolo', '/auto'):
+        elif cmd_lower in ('/kamikaze', 'kamikaze', '/yolo', 'yolo', '/auto', 'auto'):
             KAMIKAZE_MODE = not KAMIKAZE_MODE
             app_cfg['kamikaze_mode'] = KAMIKAZE_MODE
             save_config(app_cfg)
@@ -1320,6 +1396,7 @@ def run_agent_loop(initial_prompt=None, initial_mic=False):
             print(f"  {BOLD}/recall <query>{RESET}   Search OpenViking memory database")
             print(f"  {BOLD}/mic{RESET}             Record 5s query from Toughbook microphone")
             print(f"  {BOLD}/clear{RESET}           Clear conversation context")
+            print(f"  {BOLD}Ctrl+Q{RESET}           Exit agent (Ctrl+C=Copy, Ctrl+V=Paste, Ctrl+Z=Undo)")
             print(f"  {BOLD}<Esc> / Ctrl+C{RESET}   Instantly cancel thinking or speech")
             print(f"  {BOLD}exit{RESET}             Exit agent\n")
             continue
@@ -2258,7 +2335,7 @@ zenity --question --title="Confirm Installation" \
   --ok-label="Yes, Erase & Install" --cancel-label="Cancel" || exit 0
 
 LOG="/tmp/revenant_install.log"
-echo "=== Revenant OS 1.1 (Build 20.3) Installation Started ===" > "$LOG"
+echo "=== Revenant OS 1.1 (Build 20.4) Installation Started ===" > "$LOG"
 date >> "$LOG"
 
 (
@@ -2614,7 +2691,7 @@ insmod ext2
 set root='hd0,msdos1'
 search --no-floppy --fs-uuid --set=root $UUID
 
-menuentry "Revenant OS 1.1 (Build 20.3) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 20.4) - Agentic Linux" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -2623,7 +2700,7 @@ menuentry "Revenant OS 1.1 (Build 20.3) - Agentic Linux" --class debian --class 
     initrd /boot/$INITRD
 }
 
-menuentry "Revenant OS 1.1 (Build 20.3) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
+menuentry "Revenant OS 1.1 (Build 20.4) (Recovery Mode)" --class debian --class gnu-linux --class gnu --class os {
     insmod gzio
     insmod part_msdos
     insmod ext2
@@ -2647,11 +2724,11 @@ umount -l /mnt/target/dev 2>/dev/null || true
 umount -l /mnt/target 2>/dev/null || true
 
 echo "100"; echo "# Installation Complete!"
-) | zenity --progress --title="Installing Revenant OS 1.1 (Build 20.3)" --text="Starting installation..." --percentage=0 --auto-close
+) | zenity --progress --title="Installing Revenant OS 1.1 (Build 20.4)" --text="Starting installation..." --percentage=0 --auto-close
 
 if [ -f "$LOG" ] && grep -iq "Installing for i386-pc platform" "$LOG"; then
   zenity --info --title="Success" \
-    --text="<b>Revenant OS 1.1 (Build 20.3) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
+    --text="<b>Revenant OS 1.1 (Build 20.4) has been successfully installed to $DRIVE!</b>\n\nYou can now reboot and remove the USB drive."
 else
   zenity --error --title="Error" \
     --text="An error occurred during installation. Check /tmp/revenant_install.log or the target drive."
@@ -2679,12 +2756,12 @@ if background_image /boot/grub/splash.png; then
   set color_highlight=cyan/black
 fi
 
-menuentry "Revenant OS 1.1 (Build 20.3) - Unified Field Agent (Offline Voice + Local 3B + OpenViking Memory)" {
+menuentry "Revenant OS 1.1 (Build 20.4) - Unified Field Agent (Offline Voice + Local 3B + OpenViking Memory)" {
     linux /live/vmlinuz boot=live components quiet splash
     initrd /live/initrd.img
 }
 
-menuentry "Revenant OS 1.1 (Build 20.3) (Safe Graphics / Failsafe)" {
+menuentry "Revenant OS 1.1 (Build 20.4) (Safe Graphics / Failsafe)" {
     linux /live/vmlinuz boot=live components nomodeset
     initrd /live/initrd.img
 }
@@ -2693,13 +2770,13 @@ EOF
 echo "[*] Packaging patched SquashFS (xz compression)..."
 mksquashfs "$PATCH_ROOT" "$WORKSPACE_DIR/image/live/filesystem.squashfs" -comp xz
 
-echo "[*] Building 1.1 Build 20.3 ISO with hybrid bootloader..."
-grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 20.3)"
+echo "[*] Building 1.1 Build 20.4 ISO with hybrid bootloader..."
+grub-mkrescue -o "$ISO_TARGET" "$WORKSPACE_DIR/image" --product-name="Revenant OS" --product-version="1.1 (Build 20.4)"
 cp -f "$ISO_TARGET" "$ISO_ALIAS"
 
 echo "[*] Cleaning up workspace..."
 rm -rf "$WORKSPACE_DIR" "$PATCH_ROOT"
 
-echo "[*] Build Complete! Revenant OS 1.1 (Build 20.3) ISO ready at: $ISO_TARGET"
+echo "[*] Build Complete! Revenant OS 1.1 (Build 20.4) ISO ready at: $ISO_TARGET"
 ls -lh "$ISO_TARGET" "$ISO_ALIAS"
 

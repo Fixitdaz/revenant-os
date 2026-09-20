@@ -1,8 +1,8 @@
 {
   "os_name": "Revenant OS",
   "version": "1.1.0",
-  "build": "20.3",
-  "display": "Revenant OS 1.1 (Build 20.3 - Kamikaze Autonomous Mode Edition)",
+  "build": "20.4",
+  "display": "Revenant OS 1.1 (Build 20.4 - Shortcuts & Kamikaze Polish Edition)",
   "channel": "beta",
   "target_hardware": "Panasonic Toughbook CF-52 & Field Laptops",
   "release_date": "2026-09-16",
