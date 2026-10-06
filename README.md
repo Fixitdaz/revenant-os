@@ -1,7 +1,19 @@
 # 💀 REVENANT OS (Agentic Core Edition)
 
+<div align="center">
+
+<a href="https://sourceforge.net/projects/revenant-os/">
+  <img src="./docs/assets/sourceforge_rising_star_dark.png" alt="SourceForge Rising Star Award" width="140" />
+</a>
+
+### 🏆 Winner of the SourceForge Rising Star Award 🏆
+*Recognized among 500,000+ open-source projects for milestone downloads and community engagement!*
+
+</div>
+
 > **Sovereign, Local-First Agentic AI Linux Operating System for Panasonic Toughbooks & Field Laptops**
 
+[![SourceForge Rising Star](https://img.shields.io/badge/SourceForge-Rising_Star_Award_Winner-gold?style=for-the-badge&logo=sourceforge)](https://sourceforge.net/projects/revenant-os/)
 [![Build Status](https://img.shields.io/badge/build-1.1_Build_18.3_Stable-00f0ff?style=for-the-badge&logo=linux)](https://github.com/Fixitdaz/revenant-os/releases)
 [![Download ISO](https://img.shields.io/badge/SourceForge-Download_Full_ISO_(2.85GB)-orange?style=for-the-badge&logo=sourceforge)](https://sourceforge.net/projects/revenant-os/files/latest/download)
 [![Target](https://img.shields.io/badge/Hardware-Panasonic_Toughbook_CF--52-ff007f?style=for-the-badge&logo=panasonic)](https://github.com/Fixitdaz/revenant-os)
